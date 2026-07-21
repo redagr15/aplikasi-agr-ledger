@@ -265,6 +265,7 @@ export default function AgrLedgerApp() {
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("all");
   const [wishlistFilter, setWishlistFilter] = useState("all");
+  const [txEditListMode, setTxEditListMode] = useState(false);
 
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
@@ -276,6 +277,7 @@ export default function AgrLedgerApp() {
 
   const [showAddRoutine, setShowAddRoutine] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState(null);
+  const [routineEditListMode, setRoutineEditListMode] = useState(false);
   const [routineStopTarget, setRoutineStopTarget] = useState(null);
 
   const [showAddGoal, setShowAddGoal] = useState(false);
@@ -538,7 +540,7 @@ export default function AgrLedgerApp() {
   const spaylaterByMonth = useMemo(() => {
     const map = {};
     for (const item of data?.spaylater || []) {
-      if (!item.purchaseDate || item.isFinished) continue;
+      if (!item.purchaseDate) continue;
       const d = new Date(item.purchaseDate + "T00:00:00");
       if (isNaN(d.getTime())) continue;
       
@@ -587,28 +589,48 @@ export default function AgrLedgerApp() {
 
   const gajiTambahanByMonth = useMemo(() => {
     const map = {};
+    const rawMap = {};
+
     if (Array.isArray(data?.overtimeEntries)) {
       data.overtimeEntries.forEach((item) => {
         if (!item || !item.paid) return; 
         const target = item.targetMonth || (item.date ? item.date.slice(0, 7) : todayKey().slice(0, 7));
         const [y, m] = target.split("-").map(Number);
         const key = `${y}-${m - 1}`;
-        if (!map[key]) map[key] = [];
+        if (!rawMap[key]) rawMap[key] = { biasa: 0, libur: 0, others: [] };
+        
         const { amount } = computeOvertime(data.overtimeRate || 0, item.jenis, item.totalJam || 0);
-        map[key].push({ id: `lembur-${item.id}`, name: `Lembur (${item.totalJam} jam)`, amount, paid: true });
+        if (item.jenis === "Biasa") {
+          rawMap[key].biasa += amount;
+        } else {
+          rawMap[key].libur += amount;
+        }
       });
     }
+
     if (Array.isArray(data?.transactions)) {
       data.transactions.forEach((item) => {
         if (item && item.type === "income" && item.date) {
           const d = new Date(item.date + "T00:00:00");
           if (isNaN(d.getTime())) return;
           const key = `${d.getFullYear()}-${d.getMonth()}`;
-          if (!map[key]) map[key] = [];
-          map[key].push({ id: item.id, name: item.note || "Pemasukan", amount: item.amount || 0, paid: true });
+          if (!rawMap[key]) rawMap[key] = { biasa: 0, libur: 0, others: [] };
+          rawMap[key].others.push({ id: item.id, name: item.note || "Pemasukan", amount: item.amount || 0 });
         }
       });
     }
+
+    Object.keys(rawMap).forEach(key => {
+      map[key] = [];
+      if (rawMap[key].biasa > 0) {
+        map[key].push({ id: `lembur-biasa-${key}`, name: "Lembur (Biasa)", amount: rawMap[key].biasa });
+      }
+      if (rawMap[key].libur > 0) {
+        map[key].push({ id: `lembur-libur-${key}`, name: "Lembur (Libur)", amount: rawMap[key].libur });
+      }
+      rawMap[key].others.forEach(o => map[key].push(o));
+    });
+
     return map;
   }, [data]);
 
@@ -1437,8 +1459,13 @@ export default function AgrLedgerApp() {
                 </div>
 
                 <div className="flex items-center justify-between mb-1">
-                  <SectionLabel noMargin>{filterCat === "all" ? "Transaksi terbaru" : "Difilter"}</SectionLabel>
-                  {filterCat !== "all" && <button onClick={() => setFilterCat("all")} className="text-[11px] text-lime font-medium">Hapus filter</button>}
+                  <div className="flex items-center gap-3">
+                    <SectionLabel noMargin>{filterCat === "all" ? "Transaksi terbaru" : "Difilter"}</SectionLabel>
+                    {filterCat !== "all" && <button onClick={() => setFilterCat("all")} className="text-[11px] text-lime font-medium">Hapus filter</button>}
+                  </div>
+                  <button onClick={() => setTxEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition ${txEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
+                    <Edit2 size={12} /> {txEditListMode ? "Selesai Edit" : "Edit List"}
+                  </button>
                 </div>
                 <div>
                   {filteredTransactions.length === 0 && <EmptyRow>Belum ada transaksi.</EmptyRow>}
@@ -1459,12 +1486,16 @@ export default function AgrLedgerApp() {
                             <div className="text-[11px] text-white/35 truncate">{formatDateID(t.date)} • {isTransfer ? `${fromW} ➔ ${toW}` : t.type === "income" ? "Pemasukan" : cat?.label}</div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <div className={`font-medium text-sm tabular mr-1 ${isTransfer ? "text-white/60" : t.type === "income" ? "text-teal" : "text-white"}`}>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className={`font-medium text-sm tabular ${isTransfer ? "text-white/60" : t.type === "income" ? "text-teal" : "text-white"}`}>
                             {isTransfer ? "" : t.type === "income" ? "+" : "-"}{rupiah(t.amount)}
                           </div>
-                          <button onClick={() => setEditingTx(t)} className="text-white/0 group-hover:text-white/30 hover:text-white transition p-1" title="Edit"><Edit2 size={12} /></button>
-                          <button onClick={() => requestConfirm("Hapus Transaksi?", "Transaksi akan dihapus permanen.", () => deleteTransaction(t.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-1"><Trash2 size={13} /></button>
+                          {txEditListMode && (
+                            <div className="flex items-center gap-1.5 ml-2">
+                              <button onClick={() => setEditingTx(t)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={13} /></button>
+                              <button onClick={() => requestConfirm("Hapus Transaksi?", "Transaksi akan dihapus permanen.", () => deleteTransaction(t.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={13} /></button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -1653,7 +1684,12 @@ export default function AgrLedgerApp() {
             <div className="pt-8 border-t border-white/10 mb-10">
               <div className="flex items-center justify-between mb-6">
                 <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
-                <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah Rutin</button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setRoutineEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-2 flex items-center gap-1.5 transition ${routineEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
+                    <Edit2 size={13} /> {routineEditListMode ? "Selesai Edit" : "Edit List"}
+                  </button>
+                  <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah Rutin</button>
+                </div>
               </div>
 
               {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
@@ -1671,11 +1707,13 @@ export default function AgrLedgerApp() {
                         <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
                         <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => setEditingRoutine(e)} className="text-white/30 hover:text-white p-2" title="Edit"><Edit2 size={14} /></button>
-                        <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400/70 hover:text-yellow-400 p-2 text-xs font-medium" title="Stop Berlangganan">Stop</button>
-                        <button onClick={() => requestConfirm("Batalkan/Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-white/30 hover:text-coral p-2" title="Hapus"><Trash2 size={14} /></button>
-                      </div>
+                      {routineEditListMode && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400 hover:text-yellow-300 px-2.5 py-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs font-medium transition" title="Stop">Stop</button>
+                          <button onClick={() => setEditingRoutine(e)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={14} /></button>
+                          <button onClick={() => requestConfirm("Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={14} /></button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
