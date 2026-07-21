@@ -2734,8 +2734,9 @@ function AddSpaylaterSheet({ onClose, onSubmit }) {
         />
 
         <label className="text-[11px] text-white/40 font-medium">Pilih Tenor (Bulan)</label>
+        {/* Diperbarui: opsi 24 bulan dihapus, hanya menyisakan 1, 3, 6, 12 */}
         <div className="flex gap-2 mt-1.5 mb-6 overflow-x-auto no-scrollbar">
-          {["3", "6", "12", "24"].map((t) => (
+          {["1", "3", "6", "12"].map((t) => (
             <button
               key={t}
               onClick={() => setTenor(t)}
@@ -2745,7 +2746,7 @@ function AddSpaylaterSheet({ onClose, onSubmit }) {
                   : "bg-white/[0.03] border-white/10 text-white/70"
               }`}
             >
-              {t} Bln
+              {t === "1" ? "1x (Full)" : `${t} Bln`}
             </button>
           ))}
         </div>
