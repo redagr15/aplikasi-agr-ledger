@@ -1,3 +1,4 @@
+import { supabase } from "./lib/supabaseClient";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import logoImg from "./assets/logo.png";
 import {
@@ -276,28 +277,45 @@ export default function AgrLedgerApp() {
   const [breakdownTooltip, setBreakdownTooltip] = useState(null);
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
 
-  useEffect(() => {
+  // 1. useEffect pertama (ganti pakai Supabase untuk ambil data awal)
+useEffect(() => {
+  (async () => {
     try {
-      const res = localStorage.getItem("agr_ledger_data");
-      setData(res ? migrateData(JSON.parse(res)) : seedData());
+      const { data: row, error } = await supabase
+        .from("ledger_data")
+        .select("data")
+        .eq("id", 1)
+        .single();
+      if (error) throw error;
+      setData(row?.data && Object.keys(row.data).length ? migrateData(row.data) : seedData());
     } catch {
       setData(seedData());
     }
     setLoaded(true);
-  }, []);
+  })();
+}, []);
 
-  useEffect(() => {
-    setBreakdownTooltip(null);
-  }, [activeTab]);
+// 2. useEffect kedua (BIARKAN TETAP ADA, ini buat breakdown tooltip)
+useEffect(() => {
+  setBreakdownTooltip(null);
+}, [activeTab]);
 
-  useEffect(() => {
-    if (!loaded || !data) return;
+// 3. useEffect ketiga (ganti pakai Supabase untuk simpan data otomatis)
+useEffect(() => {
+  if (!loaded || !data) return;
+  const timeout = setTimeout(async () => {
     try {
-      localStorage.setItem("agr_ledger_data", JSON.stringify(data));
+      const { error } = await supabase
+        .from("ledger_data")
+        .update({ data, updated_at: new Date().toISOString() })
+        .eq("id", 1);
+      if (error) throw error;
     } catch (err) {
-      showError("Gagal menyimpan data ke sistem perangkat.");
+      showError("Gagal menyimpan data ke server.");
     }
-  }, [data, loaded]);
+  }, 500);
+  return () => clearTimeout(timeout);
+}, [data, loaded]);
 
   function showError(msg) {
     setError(msg);
