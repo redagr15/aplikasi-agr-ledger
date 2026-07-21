@@ -23,6 +23,7 @@ import {
   Upload,
   ArrowRightLeft,
   History,
+  RotateCcw,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -537,16 +538,18 @@ export default function AgrLedgerApp() {
   const spaylaterByMonth = useMemo(() => {
     const map = {};
     for (const item of data?.spaylater || []) {
-      if (!item.purchaseDate) continue;
+      if (!item.purchaseDate || item.isFinished) continue;
       const d = new Date(item.purchaseDate + "T00:00:00");
       if (isNaN(d.getTime())) continue;
       
-      const startMonth = d.getMonth() + 1;
+      const startMonthIndex = d.getMonth();
       const startYear = d.getFullYear();
+
       for (let i = 0; i < item.tenor; i++) {
-        const mIdx = (startMonth + i) % 12;
-        const yOffset = Math.floor((startMonth + i) / 12);
-        const targetYear = startYear + yOffset;
+        const absoluteMonthIndex = startMonthIndex + i;
+        const targetYear = startYear + Math.floor(absoluteMonthIndex / 12);
+        const mIdx = absoluteMonthIndex % 12;
+
         const key = `${targetYear}-${mIdx}`;
         if (!map[key]) map[key] = [];
         map[key].push({
@@ -1914,7 +1917,10 @@ export default function AgrLedgerApp() {
                       <div className="text-[11px] text-white/40">Mulai: {formatDateID(item.purchaseDate)} • Tenor: {item.tenor} Bln</div>
                       <div className="text-xs font-medium text-lime tabular mt-1">{rupiah(item.totalAmount)}</div>
                     </div>
-                    <button onClick={() => requestConfirm("Hapus Riwayat?", "Riwayat akan dihapus.", () => deleteSpaylater(item.id))} className="text-white/30 hover:text-coral p-2"><Trash2 size={15} /></button>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => toggleSpaylaterFinished(item.id)} className="text-lime hover:bg-lime/10 p-2 rounded-lg transition" title="Batalkan status lunas (Cancel Finish)"><RotateCcw size={15} /></button>
+                      <button onClick={() => requestConfirm("Hapus Riwayat?", "Riwayat akan dihapus.", () => deleteSpaylater(item.id))} className="text-white/30 hover:text-coral p-2"><Trash2 size={15} /></button>
+                    </div>
                   </div>
                 ))
               )}
