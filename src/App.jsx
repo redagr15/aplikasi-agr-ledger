@@ -89,7 +89,7 @@ const emptyYearData = (inheritedGaji = 0) => ({
   months: Object.fromEntries(
     MONTHS.map((m) => [
       m,
-      { saldoAwal: 0, gaji: inheritedGaji, rutin: 0, keterangan: "" },
+      { saldoAwal: 0, gaji: inheritedGaji, keterangan: "" },
     ])
   ),
 });
@@ -109,6 +109,7 @@ const seedData = () => ({
   overtimeRate: 4500000,
   overtimeEntries: [],
   spaylater: [],
+  routineEntries: [],
 });
 
 function migrateData(raw) {
@@ -136,7 +137,34 @@ function migrateData(raw) {
   if (!merged.wishlistCategories) merged.wishlistCategories = [];
   if (typeof merged.overtimeRate !== "number") merged.overtimeRate = seed.overtimeRate;
   if (!Array.isArray(merged.overtimeEntries)) merged.overtimeEntries = [];
-  if (!merged.spaylater) merged.spaylater = [];
+  if (!Array.isArray(merged.spaylater)) merged.spaylater = [];
+  if (!Array.isArray(merged.routineEntries)) merged.routineEntries = [];
+
+  for (const y of Object.keys(merged.budgetYears)) {
+    if (merged.budgetYears[y] && merged.budgetYears[y].months) {
+      for (const m of Object.keys(merged.budgetYears[y].months)) {
+        delete merged.budgetYears[y].months[m].rutin;
+      }
+    }
+  }
+
+  merged.routineEntries = merged.routineEntries.map(e => {
+    let sIdx = e.startIndex !== undefined ? e.startIndex : 0;
+    let stopIdx = e.stopIndex !== undefined ? e.stopIndex : 11;
+    if (e.startMonth) {
+      const parts = e.startMonth.split("-");
+      if (parts.length === 2) sIdx = Number(parts[1]) - 1;
+    }
+    return {
+      id: e.id || crypto.randomUUID(),
+      name: e.name || "Rutin",
+      amount: Number(e.amount) || 0,
+      activeYear: e.activeYear || Number(merged.activeYear) || new Date().getFullYear(),
+      startIndex: sIdx,
+      stopIndex: stopIdx,
+    };
+  });
+
   return merged;
 }
 
@@ -245,6 +273,10 @@ export default function AgrLedgerApp() {
   const [editingOvertime, setEditingOvertime] = useState(null);
   const [showAddSpaylater, setShowAddSpaylater] = useState(false);
 
+  const [showAddRoutine, setShowAddRoutine] = useState(false);
+  const [editingRoutine, setEditingRoutine] = useState(null);
+  const [routineStopTarget, setRoutineStopTarget] = useState(null);
+
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [editingGoalId, setEditingGoalId] = useState(null);
   const [topUpGoal, setTopUpGoal] = useState(null);
@@ -262,7 +294,7 @@ export default function AgrLedgerApp() {
 
   const [confirmAction, setConfirmAction] = useState(null);
   const importInputRef = useRef(null);
-  const [activePopup, setActivePopup] = useState(null); // Ubah dari tooltip hover ke state klik popup
+  const [activePopup, setActivePopup] = useState(null);
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
 
   useEffect(() => {
@@ -286,7 +318,6 @@ export default function AgrLedgerApp() {
     setActivePopup(null);
   }, [activeTab]);
 
-  // Tutup popup otomatis kalau layar di-scroll
   useEffect(() => {
     const handleScroll = () => {
       if (activePopup) setActivePopup(null);
@@ -578,6 +609,33 @@ export default function AgrLedgerApp() {
     return map;
   }, [data]);
 
+  const routineByMonth = useMemo(() => {
+    const map = {};
+    const activeY = Number(data?.activeYear || new Date().getFullYear());
+    if (Array.isArray(data?.routineEntries)) {
+      data.routineEntries.forEach((item) => {
+        if (!item) return;
+        const itemYear = Number(item.activeYear || activeY);
+        if (itemYear !== activeY) return;
+
+        const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
+        const stopIdx = item.stopIndex !== undefined ? Number(item.stopIndex) : 11;
+
+        for (let mIdx = startIdx; mIdx <= stopIdx; mIdx++) {
+          const key = `${activeY}-${mIdx}`;
+          if (!map[key]) map[key] = [];
+          map[key].push({
+            id: item.id,
+            name: item.name,
+            amount: item.amount,
+            activeRange: `${MONTHS[startIdx]} - ${MONTHS[stopIdx]}`,
+          });
+        }
+      });
+    }
+    return map;
+  }, [data]);
+
   function computeYearEndBalance(yearKey, allBudgetYears) {
     if (!allBudgetYears[yearKey]) return 0;
     const sortedExistingYears = Object.keys(allBudgetYears).map(Number).sort((a, b) => a - b);
@@ -604,12 +662,27 @@ export default function AgrLedgerApp() {
       const incList = gajiTambahanByMonth[`${yearKey}-${idx}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
 
+      let totalRutinOtomatis = 0;
+      if (Array.isArray(data?.routineEntries)) {
+        data.routineEntries.forEach((item) => {
+          const itemYear = Number(item.activeYear || yearKey);
+          if (itemYear === Number(yearKey)) {
+            const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
+            const stopIdx = item.stopIndex !== undefined ? Number(item.stopIndex) : 11;
+            if (idx >= startIdx && idx <= stopIdx) {
+              totalRutinOtomatis += Number(item.amount) || 0;
+            }
+          }
+        });
+      }
+
       const mRow = { 
         ...yearMonths[m], 
         gaji: resolvedGajiList[idx],
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
         gajiTambahan: totalGajiTambahanOtomatis,
+        rutin: totalRutinOtomatis,
       };
       runningBal = computeAkhir(mRow, runningBal);
     });
@@ -645,12 +718,12 @@ export default function AgrLedgerApp() {
     setData((prev) => {
       const sortedYears = Object.keys(prev.budgetYears).map(Number).sort((a, b) => a - b);
       const nextYear = sortedYears.length ? Math.max(...sortedYears) + 1 : new Date().getFullYear();
+      const latestExistingYear = sortedYears.length ? String(sortedYears[sortedYears.length - 1]) : null;
       
       let inheritedJanSaldo = 0;
       let inheritedGaji = 0;
 
-      if (sortedYears.length > 0) {
-        const latestExistingYear = String(sortedYears[sortedYears.length - 1]);
+      if (latestExistingYear) {
         inheritedJanSaldo = computeYearEndBalance(latestExistingYear, prev.budgetYears);
         const latestYearMonths = prev.budgetYears[latestExistingYear].months;
         inheritedGaji = latestYearMonths[MONTHS[MONTHS.length - 1]].gaji || 0;
@@ -659,10 +732,29 @@ export default function AgrLedgerApp() {
       const newYearData = emptyYearData(inheritedGaji);
       newYearData.months[MONTHS[0]].saldoAwal = inheritedJanSaldo;
 
+      const newRoutineEntries = [...(prev.routineEntries || [])];
+      if (latestExistingYear) {
+        const prevRoutines = (prev.routineEntries || []).filter(e => Number(e.activeYear) === Number(latestExistingYear) && Number(e.stopIndex) === 11);
+        prevRoutines.forEach(r => {
+          const exists = newRoutineEntries.some(e => Number(e.activeYear) === Number(nextYear) && e.name === r.name);
+          if (!exists) {
+            newRoutineEntries.push({
+              id: crypto.randomUUID(),
+              name: r.name,
+              amount: r.amount,
+              activeYear: nextYear,
+              startIndex: 0,
+              stopIndex: 11,
+            });
+          }
+        });
+      }
+
       return {
         ...prev,
         budgetYears: { ...prev.budgetYears, [nextYear]: newYearData },
         activeYear: nextYear,
+        routineEntries: newRoutineEntries,
       };
     });
   }
@@ -683,6 +775,30 @@ export default function AgrLedgerApp() {
     });
     setSelectedYearsToDelete([]);
     setIsDeleteMode(false);
+  }
+
+  function addRoutineEntry({ name, amount, startIndex }) {
+    setData((prev) => ({
+      ...prev,
+      routineEntries: [
+        { id: crypto.randomUUID(), name, amount: Number(amount), activeYear: prev.activeYear, startIndex: Number(startIndex), stopIndex: 11 },
+        ...(prev.routineEntries || []),
+      ],
+    }));
+  }
+
+  function updateRoutineEntry(id, updatedData) {
+    setData((prev) => ({
+      ...prev,
+      routineEntries: prev.routineEntries.map((e) => (e.id === id ? { ...e, ...updatedData } : e)),
+    }));
+  }
+
+  function deleteRoutineEntry(id) {
+    setData((prev) => ({
+      ...prev,
+      routineEntries: prev.routineEntries.filter((e) => e.id !== id),
+    }));
   }
 
   const wishlistTotal = useMemo(() => {
@@ -974,12 +1090,16 @@ export default function AgrLedgerApp() {
       const incList = gajiTambahanByMonth[`${currentYearStr}-${index}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
 
+      const rutList = routineByMonth[`${currentYearStr}-${index}`] || [];
+      const totalRutinOtomatis = rutList.reduce((s, i) => s + i.amount, 0);
+
       const row = {
-        ...(rawMonths[m] || { saldoAwal: 0, rutin: 0, keterangan: "" }),
+        ...(rawMonths[m] || { saldoAwal: 0, keterangan: "" }),
         gaji: resolvedGajiList[index],
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
         gajiTambahan: totalGajiTambahanOtomatis,
+        rutin: totalRutinOtomatis,
       };
       
       let currentSaldoAwal = index === 0 ? baseJanSaldo : runningBalance;
@@ -994,7 +1114,7 @@ export default function AgrLedgerApp() {
     });
 
     return computedMonths;
-  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth]);
+  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth]);
 
   const budgetTrendData = useMemo(() => {
     if (!resolvedMonthsData) return [];
@@ -1051,6 +1171,7 @@ export default function AgrLedgerApp() {
   }
 
   const budgetYearsList = data ? Object.keys(data.budgetYears).sort() : [];
+  const currentYearRoutineEntries = (data.routineEntries || []).filter(e => Number(e.activeYear || data.activeYear) === Number(data.activeYear));
 
   return (
     <div className="min-h-screen bg-ink text-white font-display" onClick={() => { if (activePopup) setActivePopup(null); }}>
@@ -1456,7 +1577,7 @@ export default function AgrLedgerApp() {
                           />
                         </td>
 
-                        {/* Gaji Tambahan (Klik untuk Toggle Popup) */}
+                        {/* Gaji Tambahan */}
                         <td className="py-1.5 pr-3 text-right tabular text-teal">
                           {row.gajiTambahan > 0 ? (
                             <span 
@@ -1471,18 +1592,20 @@ export default function AgrLedgerApp() {
                         </td>
 
                         {/* Rutin */}
-                        <td className="py-1.5 pr-3">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={(row.rutin || 0) === 0 ? "" : (row.rutin || 0).toLocaleString("id-ID")}
-                            onChange={(e) => updateBudgetCell(data.activeYear, m, "rutin", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
-                            placeholder="0"
-                            className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
-                          />
+                        <td className="py-1.5 pr-3 text-right tabular text-white/80">
+                          {row.rutin > 0 ? (
+                            <span 
+                              className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
+                              onClick={(e) => handleTogglePopup(e, m, routineByMonth[`${data.activeYear}-${index}`] || [], "Rutin")}
+                            >
+                              {row.rutin.toLocaleString("id-ID")}
+                            </span>
+                          ) : (
+                            <span>0</span>
+                          )}
                         </td>
 
-                        {/* Cicilan (Klik untuk Toggle Popup) */}
+                        {/* Cicilan */}
                         <td className="py-1.5 pr-3 text-right tabular text-white/80">
                           {row.cicilan > 0 ? (
                             <span 
@@ -1496,7 +1619,7 @@ export default function AgrLedgerApp() {
                           )}
                         </td>
 
-                        {/* Pengeluaran (Klik untuk Toggle Popup) */}
+                        {/* Pengeluaran */}
                         <td className="py-1.5 pr-3 text-right tabular text-coral">
                           {row.pengeluaran > 0 ? (
                             <span 
@@ -1521,6 +1644,39 @@ export default function AgrLedgerApp() {
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* List Pengeluaran Rutin */}
+            <div className="pt-8 border-t border-white/10 mb-10">
+              <div className="flex items-center justify-between mb-6">
+                <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
+                <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah Rutin</button>
+              </div>
+
+              {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
+
+              <div className="space-y-3">
+                {currentYearRoutineEntries.map((e) => {
+                  const startIdx = e.startIndex !== undefined ? Number(e.startIndex) : 0;
+                  const stopIdx = e.stopIndex !== undefined ? Number(e.stopIndex) : 11;
+                  const statusText = stopIdx === 11 ? `Mulai ${MONTHS[startIdx]} (Aktif)` : `Aktif (${MONTHS[startIdx]} s.d ${MONTHS[stopIdx]})`;
+
+                  return (
+                    <div key={e.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-sm mb-1 truncate">{e.name}</div>
+                        <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
+                        <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => setEditingRoutine(e)} className="text-white/30 hover:text-white p-2" title="Edit"><Edit2 size={14} /></button>
+                        <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400/70 hover:text-yellow-400 p-2 text-xs font-medium" title="Stop Berlangganan">Stop</button>
+                        <button onClick={() => requestConfirm("Batalkan/Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-white/30 hover:text-coral p-2" title="Hapus"><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="pt-8 border-t border-white/10">
@@ -1733,6 +1889,10 @@ export default function AgrLedgerApp() {
         </div>
       )}
 
+      {routineStopTarget && (
+        <RoutineStopSheet item={routineStopTarget} onClose={() => setRoutineStopTarget(null)} onStop={(stopIdx) => { updateRoutineEntry(routineStopTarget.id, { stopIndex: stopIdx }); setRoutineStopTarget(null); }} />
+      )}
+
       {showSpaylaterHistory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
           <div className="w-full max-w-md bg-surface rounded-2xl p-6 border border-white/10 max-h-[80vh] flex flex-col">
@@ -1833,6 +1993,14 @@ export default function AgrLedgerApp() {
         <AddOvertimeSheet initialData={editingOvertime} onClose={() => setEditingOvertime(null)} onSubmit={(payload) => { updateOvertimeEntry(editingOvertime.id, payload); setEditingOvertime(null); }} />
       )}
 
+      {showAddRoutine && (
+        <AddRoutineSheet onClose={() => setShowAddRoutine(false)} onSubmit={(payload) => { addRoutineEntry(payload); setShowAddRoutine(false); }} />
+      )}
+
+      {editingRoutine && (
+        <AddRoutineSheet initialData={editingRoutine} onClose={() => setEditingRoutine(null)} onSubmit={(payload) => { updateRoutineEntry(editingRoutine.id, payload); setEditingRoutine(null); }} />
+      )}
+
       {showAddSpaylater && (
         <AddSpaylaterSheet onClose={() => setShowAddSpaylater(false)} onSubmit={(payload) => { addSpaylater(payload); setShowAddSpaylater(false); }} />
       )}
@@ -1855,6 +2023,72 @@ function TopUpGoalSheet({ goal, onClose, onSubmit }) {
         <label className="text-[11px] text-white/40 font-medium">Nominal ditabung (Rp)</label>
         <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus-lime" autoFocus />
         <button disabled={!canSubmit} onClick={() => onSubmit(parseRupiahInput(amount))} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 flex items-center justify-center gap-1.5">Tambah <ChevronRight size={16} /></button>
+      </div>
+    </div>
+  );
+}
+
+function AddRoutineSheet({ onClose, onSubmit, initialData }) {
+  const [name, setName] = useState(initialData?.name || "");
+  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
+  const [startIndex, setStartIndex] = useState(initialData?.startIndex !== undefined ? String(initialData.startIndex) : "0");
+
+  const canSubmit = name.trim() && parseRupiahInput(amount) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto no-scrollbar">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{initialData ? "Edit Rutin" : "Tambah Pengeluaran Rutin"}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama Pengeluaran Rutin</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Wifi / Listrik" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Mulai Dari Bulan Berapa?</label>
+        <select value={startIndex} onChange={(e) => setStartIndex(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime text-white">
+          {MONTHS.map((m, idx) => (
+            <option key={idx} value={String(idx)} className="bg-surface text-white">
+              {m}
+            </option>
+          ))}
+        </select>
+
+        <label className="text-[11px] text-white/40 font-medium">Nominal Per Bulan (Rp)</label>
+        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), amount: parseRupiahInput(amount), startIndex: Number(startIndex) })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan</button>
+      </div>
+    </div>
+  );
+}
+
+function RoutineStopSheet({ item, onClose, onStop }) {
+  const [stopIndex, setStopIndex] = useState(String(Math.max(item.startIndex || 0, new Date().getMonth())));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-4">
+          <div className="font-semibold text-base">Stop Berlangganan: {item.name}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <p className="text-xs text-white/60 mb-4 leading-relaxed">Pilih bulan terakhir pengeluaran rutin ini aktif. Bulan-bulan sebelumnya di tabel anggaran akan tetap aman/tersimpan, namun mulai bulan berikutnya otomatis berhenti.</p>
+
+        <label className="text-[11px] text-white/40 font-medium">Aktif Terakhir Sampai Bulan:</label>
+        <select value={stopIndex} onChange={(e) => setStopIndex(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime text-white">
+          {MONTHS.map((m, idx) => {
+            if (idx < (item.startIndex || 0)) return null;
+            return (
+              <option key={idx} value={String(idx)} className="bg-surface text-white">
+                {m}
+              </option>
+            );
+          })}
+        </select>
+
+        <button onClick={() => onStop(Number(stopIndex))} className="w-full bg-coral text-black font-semibold rounded-lg py-3.5 text-xs">Terapkan Stop Berlangganan</button>
       </div>
     </div>
   );
