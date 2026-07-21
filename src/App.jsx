@@ -262,7 +262,7 @@ export default function AgrLedgerApp() {
 
   const [confirmAction, setConfirmAction] = useState(null);
   const importInputRef = useRef(null);
-  const [breakdownTooltip, setBreakdownTooltip] = useState(null);
+  const [activePopup, setActivePopup] = useState(null); // Ubah dari tooltip hover ke state klik popup
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
 
   useEffect(() => {
@@ -283,8 +283,17 @@ export default function AgrLedgerApp() {
   }, []);
 
   useEffect(() => {
-    setBreakdownTooltip(null);
+    setActivePopup(null);
   }, [activeTab]);
+
+  // Tutup popup otomatis kalau layar di-scroll
+  useEffect(() => {
+    const handleScroll = () => {
+      if (activePopup) setActivePopup(null);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [activePopup]);
 
   useEffect(() => {
     if (!loaded || !data) return;
@@ -307,22 +316,19 @@ export default function AgrLedgerApp() {
     setTimeout(() => setError(""), 6000);
   }
 
-  function showBreakdownTooltip(e, monthLabel, breakdown, typeLabel) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const width = 240;
-    const estHeight = 84 + Math.min(breakdown.length, 6) * 22;
-    let left = rect.right - width;
-    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
-    let top = rect.bottom + 8;
-    if (top + estHeight > window.innerHeight - 8) {
-      top = rect.top - estHeight - 8;
-      if (top < 8) top = 8;
+  function handleTogglePopup(e, monthLabel, breakdown, typeLabel) {
+    e.stopPropagation();
+    if (activePopup && activePopup.label === monthLabel && activePopup.typeLabel === typeLabel) {
+      setActivePopup(null);
+      return;
     }
-    setBreakdownTooltip({ left, top, label: monthLabel, breakdown, typeLabel });
-  }
-
-  function hideBreakdownTooltip() {
-    setBreakdownTooltip(null);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const width = 260;
+    let left = rect.left + rect.width / 2 - width / 2;
+    left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+    let top = rect.bottom + 8;
+    
+    setActivePopup({ left, top, label: monthLabel, breakdown, typeLabel });
   }
 
   function requestConfirm(title, message, onConfirm) {
@@ -1047,7 +1053,7 @@ export default function AgrLedgerApp() {
   const budgetYearsList = data ? Object.keys(data.budgetYears).sort() : [];
 
   return (
-    <div className="min-h-screen bg-ink text-white font-display">
+    <div className="min-h-screen bg-ink text-white font-display" onClick={() => { if (activePopup) setActivePopup(null); }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
         .font-display { font-family: system-ui, -apple-system, sans-serif; }
@@ -1450,13 +1456,12 @@ export default function AgrLedgerApp() {
                           />
                         </td>
 
-                        {/* Gaji Tambahan (Otomatis) */}
+                        {/* Gaji Tambahan (Klik untuk Toggle Popup) */}
                         <td className="py-1.5 pr-3 text-right tabular text-teal">
                           {row.gajiTambahan > 0 ? (
                             <span 
-                              className="cursor-help border-b border-dotted border-teal/50"
-                              onMouseEnter={(e) => showBreakdownTooltip(e, m, gajiTambahanByMonth[`${data.activeYear}-${index}`] || [], "Gaji Tambahan")}
-                              onMouseLeave={hideBreakdownTooltip}
+                              className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
+                              onClick={(e) => handleTogglePopup(e, m, gajiTambahanByMonth[`${data.activeYear}-${index}`] || [], "Gaji Tambahan")}
                             >
                               {row.gajiTambahan.toLocaleString("id-ID")}
                             </span>
@@ -1477,13 +1482,12 @@ export default function AgrLedgerApp() {
                           />
                         </td>
 
-                        {/* Cicilan (Otomatis) */}
+                        {/* Cicilan (Klik untuk Toggle Popup) */}
                         <td className="py-1.5 pr-3 text-right tabular text-white/80">
                           {row.cicilan > 0 ? (
                             <span 
-                              className="cursor-help border-b border-dotted border-white/30"
-                              onMouseEnter={(e) => showBreakdownTooltip(e, m, spaylaterByMonth[`${data.activeYear}-${index}`] || [], "Cicilan")}
-                              onMouseLeave={hideBreakdownTooltip}
+                              className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
+                              onClick={(e) => handleTogglePopup(e, m, spaylaterByMonth[`${data.activeYear}-${index}`] || [], "Cicilan")}
                             >
                               {row.cicilan.toLocaleString("id-ID")}
                             </span>
@@ -1492,13 +1496,12 @@ export default function AgrLedgerApp() {
                           )}
                         </td>
 
-                        {/* Pengeluaran (Otomatis) */}
+                        {/* Pengeluaran (Klik untuk Toggle Popup) */}
                         <td className="py-1.5 pr-3 text-right tabular text-coral">
                           {row.pengeluaran > 0 ? (
                             <span 
-                              className="cursor-help border-b border-dotted border-coral/50"
-                              onMouseEnter={(e) => showBreakdownTooltip(e, m, pengeluaranByMonth[`${data.activeYear}-${index}`] || [], "Pengeluaran")}
-                              onMouseLeave={hideBreakdownTooltip}
+                              className="cursor-pointer border-b border-dotted border-coral/50 inline-block py-0.5"
+                              onClick={(e) => handleTogglePopup(e, m, pengeluaranByMonth[`${data.activeYear}-${index}`] || [], "Pengeluaran")}
                             >
                               {row.pengeluaran.toLocaleString("id-ID")}
                             </span>
@@ -1716,15 +1719,15 @@ export default function AgrLedgerApp() {
       </div>
 
       {activeTab === "home" && (
-        <div className="fixed bottom-6 left-0 right-0 flex justify-center px-5">
-          <button onClick={() => { setAddType("expense"); setShowAdd(true); }} className="bg-lime text-black font-semibold rounded-full px-6 py-3.5 flex items-center gap-2 cta-shadow active:scale-95 transition">
+        <div className="fixed bottom-6 left-0 right-0 flex justify-center px-5 pointer-events-none">
+          <button onClick={() => { setAddType("expense"); setShowAdd(true); }} className="bg-lime text-black font-semibold rounded-full px-6 py-3.5 flex items-center gap-2 cta-shadow active:scale-95 transition pointer-events-auto">
             <Plus size={17} strokeWidth={2.5} /> Catat Transaksi
           </button>
         </div>
       )}
       {activeTab === "lembur" && (
-        <div className="fixed bottom-6 left-0 right-0 flex justify-center px-5">
-          <button onClick={() => setShowAddOvertime(true)} className="bg-lime text-black font-semibold rounded-full px-6 py-3.5 flex items-center gap-2 cta-shadow active:scale-95 transition">
+        <div className="fixed bottom-6 left-0 right-0 flex justify-center px-5 pointer-events-none">
+          <button onClick={() => setShowAddOvertime(true)} className="bg-lime text-black font-semibold rounded-full px-6 py-3.5 flex items-center gap-2 cta-shadow active:scale-95 transition pointer-events-auto">
             <Plus size={17} strokeWidth={2.5} /> Catat Lembur
           </button>
         </div>
@@ -1761,19 +1764,22 @@ export default function AgrLedgerApp() {
         </div>
       )}
 
-      {breakdownTooltip && (
-        <div className="fixed z-50 w-64 bg-surface border border-white/15 rounded-lg shadow-2xl p-3 text-left pointer-events-none" style={{ left: breakdownTooltip.left, top: breakdownTooltip.top }}>
-          <div className="text-[10px] uppercase tracking-wider text-white/40 mb-2">Rincian {breakdownTooltip.typeLabel} {breakdownTooltip.label}</div>
-          <div className="space-y-1.5 max-h-40 overflow-y-auto no-scrollbar">
-            {breakdownTooltip.breakdown.map((b, idx) => (
-              <div key={b.id || idx} className="flex items-center justify-between gap-2 text-[11px]">
+      {activePopup && (
+        <div className="fixed z-50 w-72 bg-surface border border-white/15 rounded-xl shadow-2xl p-4 text-left" style={{ left: activePopup.left, top: activePopup.top }} onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+            <span className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Rincian {activePopup.typeLabel} {activePopup.label}</span>
+            <button onClick={() => setActivePopup(null)} className="text-white/40 hover:text-white p-0.5"><X size={14} /></button>
+          </div>
+          <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar">
+            {activePopup.breakdown.map((b, idx) => (
+              <div key={b.id || idx} className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-white/70 truncate">{b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}</span>
-                <span className={`tabular shrink-0 ${b.paid ? "text-lime" : "text-white/60"}`}>{rupiah(b.amount)}</span>
+                <span className={`tabular shrink-0 ${b.paid ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
               </div>
             ))}
           </div>
-          <div className="flex items-center justify-between text-[11px] font-semibold mt-2 pt-2 border-t border-white/10">
-            <span>Total</span><span className="tabular text-lime">{rupiah(breakdownTooltip.breakdown.reduce((s, b) => s + b.amount, 0))}</span>
+          <div className="flex items-center justify-between text-xs font-semibold mt-3 pt-2.5 border-t border-white/10">
+            <span>Total</span><span className="tabular text-lime">{rupiah(activePopup.breakdown.reduce((s, b) => s + b.amount, 0))}</span>
           </div>
         </div>
       )}
