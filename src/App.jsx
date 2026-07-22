@@ -742,6 +742,7 @@ export default function AgrLedgerApp() {
     const map = {};
     const rawMap = {};
 
+    // Ambil dari transaksi income biasa
     if (Array.isArray(data?.transactions)) {
       data.transactions.forEach((item) => {
         if (item && item.type === "income" && item.date) {
@@ -750,6 +751,26 @@ export default function AgrLedgerApp() {
           const key = `${d.getFullYear()}-${d.getMonth()}`;
           if (!rawMap[key]) rawMap[key] = [];
           rawMap[key].push({ id: item.id, name: item.note || "Pemasukan", amount: item.amount || 0 });
+        }
+      });
+    }
+
+    // Ambil juga dari lembur yang sudah dibayar (paid) agar otomatis masuk ke Gaji Tambahan
+    if (Array.isArray(data?.overtimeEntries)) {
+      data.overtimeEntries.forEach((item) => {
+        if (!item || !item.paid) return;
+        const target = item.targetMonth || (item.date ? item.date.slice(0, 7) : todayKey().slice(0, 7));
+        const [y, m] = target.split("-").map(Number);
+        const key = `${y}-${m - 1}`;
+        if (!rawMap[key]) rawMap[key] = [];
+        
+        const { amount } = computeOvertime(data.overtimeRate || 0, item.jenis, item.totalJam || 0);
+        if (amount > 0) {
+          rawMap[key].push({
+            id: `lembur-${item.id}`,
+            name: `Lembur (${item.jenis} - ${item.totalJam} Jam)`,
+            amount: amount,
+          });
         }
       });
     }
@@ -1851,7 +1872,7 @@ export default function AgrLedgerApp() {
                             />
                           </td>
 
-                          {/* Gaji Tambahan */}
+                          {/* Gaji Tambahan (Sudah termasuk lembur yang dibayar) */}
                           <td className="py-1.5 pr-3 text-right tabular text-teal">
                             {row.gajiTambahan > 0 ? (
                               <span 
