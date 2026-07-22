@@ -1327,7 +1327,7 @@ export default function AgrLedgerApp() {
         gaji: gajiBersih,
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
-        gajiTambahan: totalGajiTambahanOtomatis,
+        gajiTambahan: totalGajiTambahanOtomatis + totalLemburBulanIni,
         rutin: totalRutinOtomatis,
       };
       
@@ -1885,7 +1885,7 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji Bersih tanpa baris lembur */}
+                          {/* Gaji Bersih */}
                           <td className="py-1.5 pr-3 text-right">
                             {row.gaji > 0 ? (
                               <span
@@ -1899,21 +1899,24 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji Tambahan dengan catatan lembur netral di bawahnya */}
+                          {/* Gaji Tambahan + Lembur digabung di angka utama */}
                           <td className="py-1.5 pr-3 text-right tabular text-teal">
-                            {row.gajiTambahan > 0 ? (
+                            {(row.gajiTambahan + lemburBulanIni) > 0 ? (
                               <span 
                                 className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
-                                onClick={(e) => handleTogglePopup(e, m, gajiTambahanByMonth[`${data.activeYear}-${index}`] || [], "Gaji Tambahan")}
+                                onClick={(e) => handleTogglePopup(e, m, [
+                                  ...(gajiTambahanByMonth[`${data.activeYear}-${index}`] || []),
+                                  ...(lemburBulanIni > 0 ? [{ id: `lembur-${index}`, name: "Lembur", amount: lemburBulanIni }] : [])
+                                ], "Gaji Tambahan")}
                               >
-                                {row.gajiTambahan.toLocaleString("id-ID")}
+                                {(row.gajiTambahan + lemburBulanIni).toLocaleString("id-ID")}
                               </span>
                             ) : (
                               <span>0</span>
                             )}
                             {lemburBulanIni > 0 && (
                               <div className="text-[9px] text-white/40 text-right tabular whitespace-nowrap">
-                                lembur -{lemburBulanIni.toLocaleString("id-ID")}
+                                lembur: {lemburBulanIni.toLocaleString("id-ID")}
                               </div>
                             )}
                           </td>
@@ -2462,7 +2465,7 @@ export default function AgrLedgerApp() {
                 <span className="text-white/70 truncate">{b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}</span>
                 <span className="flex items-center gap-2 shrink-0">
                   <span className={`tabular ${b.paid ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
-                  {activePopup.typeLabel === "Gaji" && (
+                  {activePopup.typeLabel === "Gaji" && !String(b.id).startsWith("lembur") && (
                     <button onClick={() => { deleteSalaryEntry(b.id); setActivePopup(null); }} className="text-white/30 hover:text-coral"><Trash2 size={12} /></button>
                   )}
                 </span>
