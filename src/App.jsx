@@ -871,7 +871,7 @@ export default function AgrLedgerApp() {
         gaji: gajiBersih,
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
-        gajiTambahan: totalGajiTambahanOtomatis,
+        gajiTambahan: totalGajiTambahanOtomatis + totalLemburBulanIni,
         rutin: totalRutinOtomatis,
       };
       runningBal = computeAkhir(mRow, runningBal);
@@ -1592,7 +1592,6 @@ export default function AgrLedgerApp() {
                         </div>
                       </div>
 
-                      {/* Tombol Riwayat Gaji Kotor di Beranda */}
                       <button onClick={() => setShowSalaryHistory(true)} className="mt-3 text-[10px] text-lime hover:underline flex items-center gap-1">
                         <History size={10} /> Riwayat Gaji Kotor
                       </button>
@@ -1899,26 +1898,25 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji Tambahan + Lembur digabung di angka utama */}
+                          {/* Gaji Tambahan (Sudah bersih dari teks kecil duplikat) */}
                           <td className="py-1.5 pr-3 text-right tabular text-teal">
-                            {(row.gajiTambahan + lemburBulanIni) > 0 ? (
-                              <span 
-                                className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
-                                onClick={(e) => handleTogglePopup(e, m, [
-                                  ...(gajiTambahanByMonth[`${data.activeYear}-${index}`] || []),
-                                  ...(lemburBulanIni > 0 ? [{ id: `lembur-${index}`, name: "Lembur", amount: lemburBulanIni }] : [])
-                                ], "Gaji Tambahan")}
-                              >
-                                {(row.gajiTambahan + lemburBulanIni).toLocaleString("id-ID")}
-                              </span>
-                            ) : (
-                              <span>0</span>
-                            )}
-                            {lemburBulanIni > 0 && (
-                              <div className="text-[9px] text-white/40 text-right tabular whitespace-nowrap">
-                                lembur: {lemburBulanIni.toLocaleString("id-ID")}
-                              </div>
-                            )}
+                            {(() => {
+                              const incList = gajiTambahanByMonth[`${data.activeYear}-${index}`] || [];
+                              const totalIncome = incList.reduce((s, i) => s + i.amount, 0);
+                              const totalCombined = totalIncome + lemburBulanIni;
+                              if (totalCombined <= 0) return <span>0</span>;
+                              return (
+                                <span
+                                  className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
+                                  onClick={(e) => handleTogglePopup(e, m, [
+                                    ...incList,
+                                    ...(lemburBulanIni > 0 ? [{ id: `lembur-${index}`, name: "Lembur", amount: lemburBulanIni }] : [])
+                                  ], "Gaji Tambahan")}
+                                >
+                                  {totalCombined.toLocaleString("id-ID")}
+                                </span>
+                              );
+                            })()}
                           </td>
 
                           {/* Rutin */}
