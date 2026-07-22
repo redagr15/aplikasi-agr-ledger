@@ -29,6 +29,7 @@ import {
   Filter,
   ListChecks,
   AlertCircle,
+  ExternalLink,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -148,6 +149,13 @@ function migrateData(raw) {
   if (typeof merged.monthlyBudget !== "number") merged.monthlyBudget = seed.monthlyBudget;
 
   if (!merged.wishlistCategories) merged.wishlistCategories = [];
+  else {
+    merged.wishlistCategories = merged.wishlistCategories.map(cat => ({
+      ...cat,
+      items: Array.isArray(cat.items) ? cat.items.map(i => ({ ...i, link: i.link || "" })) : []
+    }));
+  }
+
   if (typeof merged.overtimeRate !== "number") merged.overtimeRate = seed.overtimeRate;
   if (!Array.isArray(merged.overtimeEntries)) merged.overtimeEntries = [];
   if (!Array.isArray(merged.spaylater)) merged.spaylater = [];
@@ -299,6 +307,7 @@ export default function AgrLedgerApp() {
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
   const [addItemCategory, setAddItemCategory] = useState(null);
+  const [expandedWishlistId, setExpandedWishlistId] = useState(null); // State untuk klik barang wishlist
 
   const [showAddOvertime, setShowAddOvertime] = useState(false);
   const [editingOvertime, setEditingOvertime] = useState(null);
@@ -313,7 +322,6 @@ export default function AgrLedgerApp() {
   const [spaySearch, setSpaySearch] = useState("");
   const [spaySort, setSpaySort] = useState("default");
 
-  // State untuk Tab Tugas
   const [showAddTask, setShowAddTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [taskFilter, setTaskFilter] = useState("active");
@@ -472,7 +480,6 @@ export default function AgrLedgerApp() {
     }));
   }
 
-  // Fungsi-fungsi Tasks
   function addTask({ title, description, priority, dueDate, subtasks }) {
     setData((prev) => ({
       ...prev,
@@ -517,6 +524,16 @@ export default function AgrLedgerApp() {
         t.id === taskId
           ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, done: !s.done } : s)) }
           : t
+      ),
+    }));
+  }
+
+  // Fungsi Wishlist Item dengan Link
+  function addWishlistItem(catId, { name, price, link }) {
+    setData((prev) => ({
+      ...prev,
+      wishlistCategories: prev.wishlistCategories.map((c) =>
+        c.id === catId ? { ...c, items: [...c.items, { id: crypto.randomUUID(), name, price, link: link || "", bought: false }] } : c
       ),
     }));
   }
@@ -994,15 +1011,6 @@ export default function AgrLedgerApp() {
     }));
   }
 
-  function addWishlistItem(catId, { name, price }) {
-    setData((prev) => ({
-      ...prev,
-      wishlistCategories: prev.wishlistCategories.map((c) =>
-        c.id === catId ? { ...c, items: [...c.items, { id: crypto.randomUUID(), name, price, bought: false }] } : c
-      ),
-    }));
-  }
-
   function toggleWishlistBought(catId, itemId) {
     setData((prev) => ({
       ...prev,
@@ -1356,7 +1364,6 @@ export default function AgrLedgerApp() {
     return list;
   }, [data?.spaylater, spaySearch, spaySort]);
 
-  // Computed untuk Tab Tugas
   const sortedFilteredTasks = useMemo(() => {
     if (!data || !Array.isArray(data.tasks)) return [];
     let list = [...data.tasks];
@@ -2118,6 +2125,7 @@ export default function AgrLedgerApp() {
           </div>
         )}
 
+        {/* Tab Wishlist dengan Fitur Klik Baris untuk Link Marketplace */}
         {activeTab === "wishlist" && (
           <div>
             <div className="flex items-center justify-between mb-6">
@@ -2155,14 +2163,45 @@ export default function AgrLedgerApp() {
                       <button onClick={() => requestConfirm("Hapus Kategori?", "Kategori akan dihapus.", () => deleteWishlistCategory(cat.id))} className="text-white/20 hover:text-coral"><Trash2 size={13} /></button>
                     </div>
                   </div>
-                  {filteredItems.map((item) => (
-                    <div key={item.id} className="flex items-center gap-3 py-2.5 border-b border-white/5">
-                      <input type="checkbox" checked={item.bought} onChange={() => toggleWishlistBought(cat.id, item.id)} className="accent-lime shrink-0 w-4 h-4" />
-                      <div className={`flex-1 text-sm min-w-0 truncate ${item.bought ? "line-through text-white/30" : ""}`}>{item.name}</div>
-                      <div className={`text-sm tabular shrink-0 ${item.bought ? "text-white/30" : ""}`}>{rupiah(item.price)}</div>
-                      <button onClick={() => requestConfirm("Hapus Barang?", "Barang akan dihapus.", () => deleteWishlistItem(cat.id, item.id))} className="text-white/15 hover:text-coral"><X size={13} /></button>
-                    </div>
-                  ))}
+                  {filteredItems.map((item) => {
+                    const isItemExpanded = expandedWishlistId === item.id;
+                    return (
+                      <div key={item.id} className="border-b border-white/5 py-2.5">
+                        <div className="flex items-center gap-3">
+                          <input type="checkbox" checked={item.bought} onChange={() => toggleWishlistBought(cat.id, item.id)} className="accent-lime shrink-0 w-4 h-4" />
+                          
+                          {/* Klik nama barang untuk memunculkan link marketplace */}
+                          <div 
+                            onClick={() => setExpandedWishlistId(isItemExpanded ? null : item.id)}
+                            className={`flex-1 text-sm min-w-0 truncate cursor-pointer hover:text-lime transition ${item.bought ? "line-through text-white/30" : ""}`}
+                          >
+                            {item.name}
+                          </div>
+
+                          <div className={`text-sm tabular shrink-0 ${item.bought ? "text-white/30" : ""}`}>{rupiah(item.price)}</div>
+                          <button onClick={() => requestConfirm("Hapus Barang?", "Barang akan dihapus.", () => deleteWishlistItem(cat.id, item.id))} className="text-white/15 hover:text-coral ml-1"><X size={13} /></button>
+                        </div>
+
+                        {/* Munculkan link marketplace jika item ini sedang diklik/di-expand */}
+                        {isItemExpanded && (
+                          <div className="mt-2.5 pl-7 flex items-center justify-between bg-white/[0.02] p-2 rounded-lg border border-white/10">
+                            {item.link ? (
+                              <a 
+                                href={item.link.startsWith("http") ? item.link : `https://${item.link}`} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-xs text-teal hover:underline flex items-center gap-1.5 truncate mr-2"
+                              >
+                                <ExternalLink size={13} /> Buka Link Marketplace
+                              </a>
+                            ) : (
+                              <span className="text-[11px] text-white/30 italic">Belum ada link marketplace yang dimasukkan.</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   <button onClick={() => { setAddItemCategory(cat.id); setShowAddItem(true); }} className="mt-2.5 text-[11px] text-white/40 hover:text-lime flex items-center gap-1"><Plus size={11} /> Tambah barang</button>
                 </div>
               );
@@ -2379,7 +2418,7 @@ export default function AgrLedgerApp() {
       )}
 
       {showAddItem && (
-        <AddWishlistItemSheet onClose={() => { setShowAddItem(false); setAddItemCategory(null); }} onSubmit={({ name, price }) => { addWishlistItem(addItemCategory, { name, price }); setShowAddItem(false); setAddItemCategory(null); }} />
+        <AddWishlistItemSheet onClose={() => { setShowAddItem(false); setAddItemCategory(null); }} onSubmit={({ name, price, link }) => { addWishlistItem(addItemCategory, { name, price, link }); setShowAddItem(false); setAddItemCategory(null); }} />
       )}
 
       {showAddOvertime && (
@@ -2402,7 +2441,6 @@ export default function AgrLedgerApp() {
         <AddSpaylaterSheet onClose={() => setShowAddSpaylater(false)} onSubmit={(payload) => { addSpaylater(payload); setShowAddSpaylater(false); }} />
       )}
 
-      {/* Modal Add/Edit Task */}
       {showAddTask && (
         <AddTaskSheet onClose={() => setShowAddTask(false)} onSubmit={(payload) => { addTask(payload); setShowAddTask(false); }} />
       )}
@@ -2424,6 +2462,34 @@ export default function AgrLedgerApp() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function AddWishlistItemSheet({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [link, setLink] = useState("");
+  const canSubmit = name.trim() && parseRupiahInput(price) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Barang Wishlist</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <label className="text-[11px] text-white/40 font-medium">Nama barang</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Shifter" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" autoFocus />
+        
+        <label className="text-[11px] text-white/40 font-medium">Harga</label>
+        <input type="text" inputMode="numeric" value={price} onChange={(e) => setPrice(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+        
+        <label className="text-[11px] text-white/40 font-medium">Link Marketplace (Opsional)</label>
+        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://shopee.co.id/..." className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xs outline-none focus-lime" />
+
+        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), price: parseRupiahInput(price), link: link.trim() })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Barang</button>
+      </div>
     </div>
   );
 }
@@ -2736,28 +2802,6 @@ function SingleFieldSheet({ title, label, placeholder, submitLabel, onClose, onS
         <label className="text-[11px] text-white/40 font-medium">{label}</label>
         <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={placeholder} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
         <button disabled={!value.trim()} onClick={() => onSubmit(value.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">{submitLabel}</button>
-      </div>
-    </div>
-  );
-}
-
-function AddWishlistItemSheet({ onClose, onSubmit }) {
-  const [name, setName] = useState("");
-  const [price, setPrice] = useState("");
-  const canSubmit = name.trim() && parseRupiahInput(price) > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Tambah Barang</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">Nama barang</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Shifter" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Harga</label>
-        <input type="text" inputMode="numeric" value={price} onChange={(e) => setPrice(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus:border-lime" />
-        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), price: parseRupiahInput(price) })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Barang</button>
       </div>
     </div>
   );
