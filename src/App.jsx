@@ -420,6 +420,14 @@ export default function AgrLedgerApp() {
     reader.readAsText(file);
   }
 
+  function handleImportFileChange(e) {
+    const file = e.target.files?.[0];
+    if (file) {
+      requestConfirm("Timpa Data?", "Mengimpor file ini akan mengganti seluruh data Ledger saat ini.", () => importDataFromFile(file));
+    }
+    e.target.value = "";
+  }
+
   const totals = useMemo(() => {
     if (!data) return { income: 0, expense: 0, balance: 0, monthSpent: 0 };
     const currentMonthPrefix = new Date().toISOString().slice(0, 7);
