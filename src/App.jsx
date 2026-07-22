@@ -762,22 +762,6 @@ export default function AgrLedgerApp() {
     return map;
   }, [data]);
 
-  // Memo baru: Total lembur per bulan (khusus overtime, terpisah dari income lain)
-  const overtimeAmountByMonth = useMemo(() => {
-    const map = {};
-    if (Array.isArray(data?.overtimeEntries)) {
-      data.overtimeEntries.forEach((item) => {
-        if (!item || !item.paid) return;
-        const target = item.targetMonth || (item.date ? item.date.slice(0, 7) : todayKey().slice(0, 7));
-        const [y, m] = target.split("-").map(Number);
-        const key = `${y}-${m - 1}`;
-        const { amount } = computeOvertime(data.overtimeRate || 0, item.jenis, item.totalJam || 0);
-        map[key] = (map[key] || 0) + amount;
-      });
-    }
-    return map;
-  }, [data]);
-
   const routineByMonth = useMemo(() => {
     const map = {};
     if (Array.isArray(data?.routineEntries)) {
@@ -827,8 +811,6 @@ export default function AgrLedgerApp() {
       const incList = gajiTambahanByMonth[`${yearKey}-${idx}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
 
-      const totalLemburBulanIni = overtimeAmountByMonth[`${yearKey}-${idx}`] || 0;
-
       let totalRutinOtomatis = 0;
       if (Array.isArray(data?.routineEntries)) {
         data.routineEntries.forEach((item) => {
@@ -845,7 +827,7 @@ export default function AgrLedgerApp() {
 
       const mRow = { 
         ...yearMonths[m], 
-        gaji: resolvedGajiList[idx] - totalLemburBulanIni,
+        gaji: resolvedGajiList[idx],
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
         gajiTambahan: totalGajiTambahanOtomatis,
@@ -1297,15 +1279,12 @@ export default function AgrLedgerApp() {
       const incList = gajiTambahanByMonth[`${currentYearStr}-${index}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
 
-      const totalLemburBulanIni = overtimeAmountByMonth[`${currentYearStr}-${index}`] || 0;
-
       const rutList = routineByMonth[`${currentYearStr}-${index}`] || [];
       const totalRutinOtomatis = rutList.reduce((s, i) => s + i.amount, 0);
 
       const row = {
         ...(rawMonths[m] || { saldoAwal: 0, keterangan: "" }),
-        gajiRaw: resolvedGajiList[index],
-        gaji: resolvedGajiList[index] - totalLemburBulanIni,
+        gaji: resolvedGajiList[index],
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
         gajiTambahan: totalGajiTambahanOtomatis,
@@ -1324,7 +1303,7 @@ export default function AgrLedgerApp() {
     });
 
     return computedMonths;
-  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth, overtimeAmountByMonth]);
+  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth]);
 
   const budgetTrendData = useMemo(() => {
     if (!resolvedMonthsData) return [];
@@ -1825,7 +1804,7 @@ export default function AgrLedgerApp() {
                     <tr className="text-white/40 text-left border-b border-white/10">
                       <th className="py-2 pr-3 font-normal">Bulan</th>
                       <th className="py-2 pr-3 font-normal text-right">Saldo Awal</th>
-                      <th className="py-2 pr-3 font-normal text-right">Total Gaji</th>
+                      <th className="py-2 pr-3 font-normal text-right">Gaji</th>
                       <th className="py-2 pr-3 font-normal text-right">Gaji Tambahan</th>
                       <th className="py-2 pr-3 font-normal text-right">Rutin</th>
                       <th className="py-2 pr-3 font-normal text-right">Cicilan</th>
@@ -1860,19 +1839,16 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Total Gaji Diterima */}
-                          <td className="py-1.5 pr-3 text-right">
+                          {/* Gaji Pokok */}
+                          <td className="py-1.5 pr-3">
                             <input
                               type="text"
                               inputMode="numeric"
-                              value={(row.gajiRaw || 0) === 0 ? "" : (row.gajiRaw || 0).toLocaleString("id-ID")}
+                              value={(row.gaji || 0) === 0 ? "" : (row.gaji || 0).toLocaleString("id-ID")}
                               onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
                               placeholder="0"
                               className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
                             />
-                            {overtimeAmountByMonth[`${data.activeYear}-${index}`] > 0 && (
-                              <div className="text-[9px] text-white/30 text-right tabular whitespace-nowrap">bersih: {(row.gaji || 0).toLocaleString("id-ID")}</div>
-                            )}
                           </td>
 
                           {/* Gaji Tambahan */}
