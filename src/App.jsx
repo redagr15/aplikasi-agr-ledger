@@ -27,6 +27,8 @@ import {
   History,
   RotateCcw,
   Filter,
+  ListChecks,
+  AlertCircle,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -45,6 +47,12 @@ const CATEGORIES = [
   { id: "tagihan", label: "Tagihan", emoji: "🧾", color: "#FF7A6B" },
   { id: "hiburan", label: "Hiburan", emoji: "🎮", color: "#B39CFF" },
   { id: "lainnya", label: "Lainnya", emoji: "✨", color: "#6EE7B7" },
+];
+
+const PRIORITIES = [
+  { id: "high", label: "Tinggi", color: "#FF7A6B" },
+  { id: "medium", label: "Sedang", color: "#FFB84D" },
+  { id: "low", label: "Rendah", color: "#7CE3FF" },
 ];
 
 const MONTHS = [
@@ -114,6 +122,7 @@ const seedData = () => ({
   overtimeEntries: [],
   spaylater: [],
   routineEntries: [],
+  tasks: [],
 });
 
 function migrateData(raw) {
@@ -143,6 +152,22 @@ function migrateData(raw) {
   if (!Array.isArray(merged.overtimeEntries)) merged.overtimeEntries = [];
   if (!Array.isArray(merged.spaylater)) merged.spaylater = [];
   if (!Array.isArray(merged.routineEntries)) merged.routineEntries = [];
+  if (!Array.isArray(merged.tasks)) merged.tasks = [];
+
+  merged.tasks = merged.tasks.map(t => ({
+    id: t.id || crypto.randomUUID(),
+    title: t.title || "Tugas",
+    description: t.description || "",
+    priority: t.priority || "medium",
+    dueDate: t.dueDate || "",
+    done: !!t.done,
+    createdAt: t.createdAt || Date.now(),
+    subtasks: Array.isArray(t.subtasks) ? t.subtasks.map(s => ({
+      id: s.id || crypto.randomUUID(),
+      text: s.text || "",
+      done: !!s.done,
+    })) : [],
+  }));
 
   for (const y of Object.keys(merged.budgetYears)) {
     if (merged.budgetYears[y] && merged.budgetYears[y].months) {
@@ -230,6 +255,7 @@ function TopTabs({ active, onChange }) {
   const tabs = [
     { id: "home", label: "Beranda", icon: Home },
     { id: "budget", label: "Budget", icon: Calendar },
+    { id: "tasks", label: "Tugas", icon: ListChecks },
     { id: "wishlist", label: "Wishlist", icon: Heart },
     { id: "lembur", label: "Lembur", icon: Clock },
   ];
@@ -287,6 +313,12 @@ export default function AgrLedgerApp() {
   const [spaySearch, setSpaySearch] = useState("");
   const [spaySort, setSpaySort] = useState("default");
 
+  // State untuk Tab Tugas
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [taskFilter, setTaskFilter] = useState("active");
+  const [expandedTaskId, setExpandedTaskId] = useState(null);
+
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [editingGoalId, setEditingGoalId] = useState(null);
   const [topUpGoal, setTopUpGoal] = useState(null);
@@ -297,7 +329,6 @@ export default function AgrLedgerApp() {
   const [editingWalletId, setEditingWalletId] = useState(null);
   const [editingWalletName, setEditingWalletName] = useState("");
 
-  // State baru untuk edit saldo dompet langsung
   const [editingBalanceId, setEditingBalanceId] = useState(null);
   const [editingBalanceValue, setEditingBalanceValue] = useState("");
 
@@ -432,12 +463,60 @@ export default function AgrLedgerApp() {
     e.target.value = "";
   }
 
-  // Fungsi baru untuk adjust saldo dompet langsung tanpa transaksi
   function adjustWalletBalance(id, newBalance) {
     setData((prev) => ({
       ...prev,
       wallets: prev.wallets.map((w) =>
         w.id === id ? { ...w, balance: newBalance } : w
+      ),
+    }));
+  }
+
+  // Fungsi-fungsi Tasks
+  function addTask({ title, description, priority, dueDate, subtasks }) {
+    setData((prev) => ({
+      ...prev,
+      tasks: [
+        {
+          id: crypto.randomUUID(),
+          title,
+          description,
+          priority,
+          dueDate,
+          done: false,
+          createdAt: Date.now(),
+          subtasks: subtasks.map((s) => ({ id: crypto.randomUUID(), text: s, done: false })),
+        },
+        ...prev.tasks,
+      ],
+    }));
+  }
+
+  function updateTask(id, updatedData) {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) => (t.id === id ? { ...t, ...updatedData } : t)),
+    }));
+  }
+
+  function deleteTask(id) {
+    setData((prev) => ({ ...prev, tasks: prev.tasks.filter((t) => t.id !== id) }));
+  }
+
+  function toggleTaskDone(id) {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) => (t.id === id ? { ...t, done: !t.done } : t)),
+    }));
+  }
+
+  function toggleSubtask(taskId, subtaskId) {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) =>
+        t.id === taskId
+          ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, done: !s.done } : s)) }
+          : t
       ),
     }));
   }
@@ -1277,6 +1356,33 @@ export default function AgrLedgerApp() {
     return list;
   }, [data?.spaylater, spaySearch, spaySort]);
 
+  // Computed untuk Tab Tugas
+  const sortedFilteredTasks = useMemo(() => {
+    if (!data || !Array.isArray(data.tasks)) return [];
+    let list = [...data.tasks];
+    if (taskFilter === "active") list = list.filter((t) => !t.done);
+    if (taskFilter === "done") list = list.filter((t) => t.done);
+
+    const priorityRank = { high: 0, medium: 1, low: 2 };
+    list.sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+      if (a.dueDate && !b.dueDate) return -1;
+      if (!a.dueDate && b.dueDate) return 1;
+      return priorityRank[a.priority] - priorityRank[b.priority];
+    });
+    return list;
+  }, [data, taskFilter]);
+
+  const taskStats = useMemo(() => {
+    if (!data || !Array.isArray(data.tasks)) return { total: 0, done: 0, overdue: 0 };
+    const today = todayKey();
+    const total = data.tasks.length;
+    const done = data.tasks.filter((t) => t.done).length;
+    const overdue = data.tasks.filter((t) => !t.done && t.dueDate && t.dueDate < today).length;
+    return { total, done, overdue };
+  }, [data]);
+
   if (!loaded || !data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-ink">
@@ -1501,7 +1607,6 @@ export default function AgrLedgerApp() {
                     const isEditing = editingWalletId === w.id;
                     const isEditingBalance = editingBalanceId === w.id;
                     const canDeleteWallet = data.wallets.length > 1;
-
                     return (
                       <div key={w.id} className="pl-3 pr-2 py-3 border-l-2 bg-white/[0.03] rounded-r-xl flex flex-col justify-between group" style={{ borderColor: w.color }}>
                         <div className="flex items-center justify-between mb-2">
@@ -1520,8 +1625,6 @@ export default function AgrLedgerApp() {
                             <button onClick={() => requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.`, () => deleteWallet(w.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"><Trash2 size={11} /></button>
                           )}
                         </div>
-
-                        {/* Fitur Edit Saldo Dompet Langsung */}
                         {isEditingBalance ? (
                           <div className="flex items-center gap-1">
                             <input
@@ -1532,22 +1635,10 @@ export default function AgrLedgerApp() {
                               onChange={(e) => setEditingBalanceValue(formatRupiahInput(e.target.value))}
                               className="w-full bg-white/10 text-sm px-1.5 py-0.5 rounded outline-none tabular text-lime font-medium"
                             />
-                            <button
-                              onClick={() => {
-                                adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue));
-                                setEditingBalanceId(null);
-                              }}
-                              className="text-lime hover:scale-110"
-                            >
-                              <Check size={13} />
-                            </button>
+                            <button onClick={() => { adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue)); setEditingBalanceId(null); }} className="text-lime hover:scale-110"><Check size={13} /></button>
                           </div>
                         ) : (
-                          <div
-                            onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }}
-                            className="font-medium text-sm tabular cursor-pointer hover:text-lime transition"
-                            title="Klik untuk ubah saldo"
-                          >
+                          <div onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }} className="font-medium text-sm tabular cursor-pointer hover:text-lime transition" title="Klik untuk ubah saldo">
                             {rupiah(w.balance)}
                           </div>
                         )}
@@ -1801,7 +1892,7 @@ export default function AgrLedgerApp() {
               </table>
             </div>
 
-            {/* List Pengeluaran Rutin (Dengan Fitur Collapse/Minimize) */}
+            {/* List Pengeluaran Rutin */}
             <div className="pt-8 border-t border-white/10 mb-10">
               <div className="flex items-center justify-between mb-6">
                 <div 
@@ -1931,6 +2022,98 @@ export default function AgrLedgerApp() {
                   );
                 })}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab Tugas (Tasks) */}
+        {activeTab === "tasks" && (
+          <div>
+            <div className="flex items-center gap-4 mb-6">
+              <div>
+                <SectionLabel noMargin>Total Tugas</SectionLabel>
+                <div className="font-semibold text-lg tabular mt-1">{taskStats.total}</div>
+              </div>
+              <div>
+                <SectionLabel noMargin>Selesai</SectionLabel>
+                <div className="font-semibold text-lg tabular mt-1 text-teal">{taskStats.done}</div>
+              </div>
+              {taskStats.overdue > 0 && (
+                <div>
+                  <SectionLabel noMargin>Terlambat</SectionLabel>
+                  <div className="font-semibold text-lg tabular mt-1 text-coral flex items-center gap-1">
+                    <AlertCircle size={15} /> {taskStats.overdue}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex bg-white/[0.04] p-1 rounded-lg">
+                <button onClick={() => setTaskFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Aktif</button>
+                <button onClick={() => setTaskFilter('done')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'done' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Selesai</button>
+                <button onClick={() => setTaskFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
+              </div>
+              <button onClick={() => setShowAddTask(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tugas Baru</button>
+            </div>
+
+            {sortedFilteredTasks.length === 0 && <EmptyRow>Tidak ada tugas di sini.</EmptyRow>}
+
+            <div className="space-y-3">
+              {sortedFilteredTasks.map((t) => {
+                const prio = PRIORITIES.find((p) => p.id === t.priority) || PRIORITIES[1];
+                const isExpanded = expandedTaskId === t.id;
+                const subDone = Array.isArray(t.subtasks) ? t.subtasks.filter((s) => s.done).length : 0;
+                const subTotal = Array.isArray(t.subtasks) ? t.subtasks.length : 0;
+                const isOverdue = !t.done && t.dueDate && t.dueDate < todayKey();
+
+                return (
+                  <div key={t.id} className={`bg-white/[0.03] border rounded-xl p-4 transition ${t.done ? "border-white/5 opacity-60" : isOverdue ? "border-coral/40" : "border-white/10"}`}>
+                    <div className="flex items-start gap-3">
+                      <button onClick={() => toggleTaskDone(t.id)} className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition ${t.done ? "bg-lime border-lime" : "border-white/25 hover:border-lime"}`}>
+                        {t.done && <Check size={13} className="text-black" strokeWidth={3} />}
+                      </button>
+
+                      <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`font-medium text-sm truncate ${t.done ? "line-through text-white/40" : ""}`}>{t.title}</span>
+                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0" style={{ backgroundColor: prio.color + "26", color: prio.color }}>{prio.label}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-[11px] text-white/40">
+                          {t.dueDate && <span className={isOverdue ? "text-coral font-medium" : ""}>{formatDateID(t.dueDate)}</span>}
+                          {subTotal > 0 && <span>{subDone}/{subTotal} sub-tugas</span>}
+                        </div>
+                        {subTotal > 0 && (
+                          <div className="h-[3px] bg-white/8 overflow-hidden rounded-full mt-2">
+                            <div className="h-full bg-lime rounded-full transition-all" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => setEditingTask(t)} className="text-white/30 hover:text-white p-1.5"><Edit2 size={13} /></button>
+                        <button onClick={() => requestConfirm("Hapus Tugas?", `Tugas "${t.title}" akan dihapus.`, () => deleteTask(t.id))} className="text-white/30 hover:text-coral p-1.5"><Trash2 size={13} /></button>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="mt-3 pt-3 border-t border-white/5">
+                        {t.description && <p className="text-xs text-white/60 mb-3 leading-relaxed">{t.description}</p>}
+                        {Array.isArray(t.subtasks) && t.subtasks.length > 0 && (
+                          <div className="space-y-1.5">
+                            {t.subtasks.map((s) => (
+                              <label key={s.id} className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" checked={s.done} onChange={() => toggleSubtask(t.id, s.id)} className="accent-lime w-3.5 h-3.5" />
+                                <span className={`text-xs ${s.done ? "line-through text-white/30" : "text-white/70"}`}>{s.text}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -2092,6 +2275,13 @@ export default function AgrLedgerApp() {
           </button>
         </div>
       )}
+      {activeTab === "tasks" && (
+        <div className="fixed bottom-6 left-0 right-0 flex justify-center px-5 pointer-events-none">
+          <button onClick={() => setShowAddTask(true)} className="bg-lime text-black font-semibold rounded-full px-6 py-3.5 flex items-center gap-2 cta-shadow active:scale-95 transition pointer-events-auto">
+            <Plus size={17} strokeWidth={2.5} /> Tugas Baru
+          </button>
+        </div>
+      )}
 
       {routineStopTarget && (
         <RoutineStopSheet item={routineStopTarget} onClose={() => setRoutineStopTarget(null)} onStop={(stopIdx) => { updateRoutineEntry(routineStopTarget.id, { stopIndex: stopIdx }); setRoutineStopTarget(null); }} />
@@ -2211,6 +2401,103 @@ export default function AgrLedgerApp() {
       {showAddSpaylater && (
         <AddSpaylaterSheet onClose={() => setShowAddSpaylater(false)} onSubmit={(payload) => { addSpaylater(payload); setShowAddSpaylater(false); }} />
       )}
+
+      {/* Modal Add/Edit Task */}
+      {showAddTask && (
+        <AddTaskSheet onClose={() => setShowAddTask(false)} onSubmit={(payload) => { addTask(payload); setShowAddTask(false); }} />
+      )}
+
+      {editingTask && (
+        <AddTaskSheet
+          initialData={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSubmit={(payload) => {
+            updateTask(editingTask.id, {
+              ...payload,
+              subtasks: payload.subtasks.map((text, i) =>
+                editingTask.subtasks[i]
+                  ? { ...editingTask.subtasks[i], text }
+                  : { id: crypto.randomUUID(), text, done: false }
+              ),
+            });
+            setEditingTask(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddTaskSheet({ onClose, onSubmit, initialData }) {
+  const [title, setTitle] = useState(initialData?.title || "");
+  const [description, setDescription] = useState(initialData?.description || "");
+  const [priority, setPriority] = useState(initialData?.priority || "medium");
+  const [dueDate, setDueDate] = useState(initialData?.dueDate || "");
+  const [subtasks, setSubtasks] = useState(initialData?.subtasks?.map((s) => s.text) || []);
+  const [subtaskInput, setSubtaskInput] = useState("");
+
+  const canSubmit = title.trim();
+
+  function addSubtaskDraft() {
+    if (!subtaskInput.trim()) return;
+    setSubtasks((prev) => [...prev, subtaskInput.trim()]);
+    setSubtaskInput("");
+  }
+
+  function removeSubtaskDraft(idx) {
+    setSubtasks((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{initialData ? "Edit Tugas" : "Tugas Baru"}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Judul Tugas</label>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="mis. Bayar tagihan listrik" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" autoFocus />
+
+        <label className="text-[11px] text-white/40 font-medium">Deskripsi (opsional)</label>
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detail tambahan..." rows={2} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime resize-none" />
+
+        <label className="text-[11px] text-white/40 font-medium">Prioritas</label>
+        <div className="flex gap-2 mt-1.5 mb-4">
+          {PRIORITIES.map((p) => (
+            <button key={p.id} onClick={() => setPriority(p.id)} className="flex-1 py-2.5 rounded-lg text-xs font-medium border transition" style={priority === p.id ? { backgroundColor: p.color, borderColor: p.color, color: "#0C0D0F" } : { backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)" }}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tenggat Waktu (opsional)</label>
+        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+
+        <label className="text-[11px] text-white/40 font-medium">Sub-Tugas / Checklist (opsional)</label>
+        <div className="flex gap-2 mt-1.5 mb-2">
+          <input
+            value={subtaskInput}
+            onChange={(e) => setSubtaskInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubtaskDraft(); } }}
+            placeholder="mis. Cek nominal tagihan"
+            className="flex-1 bg-white/[0.04] rounded-lg px-3 py-2.5 text-xs outline-none focus-lime"
+          />
+          <button onClick={addSubtaskDraft} className="bg-white/10 text-white px-3 rounded-lg text-xs font-medium">Tambah</button>
+        </div>
+        {subtasks.length > 0 && (
+          <div className="space-y-1.5 mb-6">
+            {subtasks.map((s, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-white/[0.03] rounded-lg px-3 py-2">
+                <span className="text-xs text-white/70 truncate">{s}</span>
+                <button onClick={() => removeSubtaskDraft(idx)} className="text-white/30 hover:text-coral shrink-0 ml-2"><X size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button disabled={!canSubmit} onClick={() => onSubmit({ title: title.trim(), description: description.trim(), priority, dueDate, subtasks })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2">Simpan Tugas</button>
+      </div>
     </div>
   );
 }
