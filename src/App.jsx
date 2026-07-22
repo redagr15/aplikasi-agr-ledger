@@ -1581,16 +1581,14 @@ export default function AgrLedgerApp() {
                         Total Limit: <span className="text-white font-medium tabular">{rupiah(data.monthlyBudget)}</span>
                       </div>
 
-                      <div className="flex items-start justify-between">
-                        <div className="flex gap-4">
-                          <div>
-                            <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
-                            <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
-                            <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
-                          </div>
+                      <div className="flex gap-4">
+                        <div>
+                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
+                          <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
+                          <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
                         </div>
                       </div>
 
@@ -1887,11 +1885,11 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji Bersih sebagai angka utama, lembur jadi pengurang di bawahnya */}
+                          {/* Gaji Bersih tanpa baris lembur */}
                           <td className="py-1.5 pr-3 text-right">
                             {row.gaji > 0 ? (
                               <span
-                                className="cursor-pointer border-b border-dotted border-lime/50 inline-block py-0.5 tabular text-lime font-medium"
+                                className="cursor-pointer border-b border-dotted border-lime/50 inline-block py-0.5 tabular"
                                 onClick={(e) => handleTogglePopup(e, m, salaryByMonth[`${data.activeYear}-${index}`] || [], "Gaji")}
                               >
                                 {row.gaji.toLocaleString("id-ID")}
@@ -1899,14 +1897,9 @@ export default function AgrLedgerApp() {
                             ) : (
                               <span className="text-white/30 py-0.5 inline-block">0</span>
                             )}
-                            {lemburBulanIni > 0 && (
-                              <div className="text-[9px] text-coral text-right tabular whitespace-nowrap">
-                                -lembur {lemburBulanIni.toLocaleString("id-ID")}
-                              </div>
-                            )}
                           </td>
 
-                          {/* Gaji Tambahan */}
+                          {/* Gaji Tambahan dengan catatan lembur netral di bawahnya */}
                           <td className="py-1.5 pr-3 text-right tabular text-teal">
                             {row.gajiTambahan > 0 ? (
                               <span 
@@ -1917,6 +1910,11 @@ export default function AgrLedgerApp() {
                               </span>
                             ) : (
                               <span>0</span>
+                            )}
+                            {lemburBulanIni > 0 && (
+                              <div className="text-[9px] text-white/40 text-right tabular whitespace-nowrap">
+                                lembur -{lemburBulanIni.toLocaleString("id-ID")}
+                              </div>
                             )}
                           </td>
 
