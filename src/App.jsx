@@ -294,6 +294,10 @@ export default function AgrLedgerApp() {
   const [loaded, setLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState("home");
 
+  // Ref & State untuk Swipe Gesture HP
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
+
   const [showAdd, setShowAdd] = useState(false);
   const [addType, setAddType] = useState("expense");
   const [editingTx, setEditingTx] = useState(null);
@@ -307,7 +311,7 @@ export default function AgrLedgerApp() {
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
   const [addItemCategory, setAddItemCategory] = useState(null);
-  const [expandedWishlistId, setExpandedWishlistId] = useState(null); // State untuk klik barang wishlist
+  const [expandedWishlistId, setExpandedWishlistId] = useState(null);
 
   const [showAddOvertime, setShowAddOvertime] = useState(false);
   const [editingOvertime, setEditingOvertime] = useState(null);
@@ -349,6 +353,38 @@ export default function AgrLedgerApp() {
   const importInputRef = useRef(null);
   const [activePopup, setActivePopup] = useState(null);
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
+
+  // Fungsi Handler Swipe Gesture
+  const tabOrder = ["home", "budget", "tasks", "wishlist", "lembur"];
+
+  function handleTouchStart(e) {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  }
+
+  function handleTouchEnd(e) {
+    if (touchStartX.current === null || touchStartY.current === null) return;
+    const diffX = e.changedTouches[0].clientX - touchStartX.current;
+    const diffY = e.changedTouches[0].clientY - touchStartY.current;
+
+    // Pastikan gerakan horizontal lebih dominan daripada vertikal agar tidak bentrok dengan scroll
+    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+      const currentIndex = tabOrder.indexOf(activeTab);
+      if (diffX < 0) {
+        // Swipe Kiri -> Tab Berikutnya
+        if (currentIndex < tabOrder.length - 1) {
+          setActiveTab(tabOrder[currentIndex + 1]);
+        }
+      } else {
+        // Swipe Kanan -> Tab Sebelumnya
+        if (currentIndex > 0) {
+          setActiveTab(tabOrder[currentIndex - 1]);
+        }
+      }
+    }
+    touchStartX.current = null;
+    touchStartY.current = null;
+  }
 
   useEffect(() => {
     (async () => {
@@ -528,7 +564,6 @@ export default function AgrLedgerApp() {
     }));
   }
 
-  // Fungsi Wishlist Item dengan Link
   function addWishlistItem(catId, { name, price, link }) {
     setData((prev) => ({
       ...prev,
@@ -1402,7 +1437,12 @@ export default function AgrLedgerApp() {
   const currentYearRoutineEntries = (data.routineEntries || []).filter(e => Number(e.activeYear || data.activeYear) === Number(data.activeYear));
 
   return (
-    <div className="min-h-screen bg-ink text-white font-display" onClick={() => { if (activePopup) setActivePopup(null); }}>
+    <div
+      className="min-h-screen bg-ink text-white font-display"
+      onClick={() => { if (activePopup) setActivePopup(null); }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
         .font-display { font-family: system-ui, -apple-system, sans-serif; }
@@ -2125,7 +2165,7 @@ export default function AgrLedgerApp() {
           </div>
         )}
 
-        {/* Tab Wishlist dengan Fitur Klik Baris untuk Link Marketplace */}
+        {/* Tab Wishlist */}
         {activeTab === "wishlist" && (
           <div>
             <div className="flex items-center justify-between mb-6">
@@ -2169,29 +2209,19 @@ export default function AgrLedgerApp() {
                       <div key={item.id} className="border-b border-white/5 py-2.5">
                         <div className="flex items-center gap-3">
                           <input type="checkbox" checked={item.bought} onChange={() => toggleWishlistBought(cat.id, item.id)} className="accent-lime shrink-0 w-4 h-4" />
-                          
-                          {/* Klik nama barang untuk memunculkan link marketplace */}
                           <div 
                             onClick={() => setExpandedWishlistId(isItemExpanded ? null : item.id)}
                             className={`flex-1 text-sm min-w-0 truncate cursor-pointer hover:text-lime transition ${item.bought ? "line-through text-white/30" : ""}`}
                           >
                             {item.name}
                           </div>
-
                           <div className={`text-sm tabular shrink-0 ${item.bought ? "text-white/30" : ""}`}>{rupiah(item.price)}</div>
                           <button onClick={() => requestConfirm("Hapus Barang?", "Barang akan dihapus.", () => deleteWishlistItem(cat.id, item.id))} className="text-white/15 hover:text-coral ml-1"><X size={13} /></button>
                         </div>
-
-                        {/* Munculkan link marketplace jika item ini sedang diklik/di-expand */}
                         {isItemExpanded && (
                           <div className="mt-2.5 pl-7 flex items-center justify-between bg-white/[0.02] p-2 rounded-lg border border-white/10">
                             {item.link ? (
-                              <a 
-                                href={item.link.startsWith("http") ? item.link : `https://${item.link}`} 
-                                target="_blank" 
-                                rel="noopener noreferrer" 
-                                className="text-xs text-teal hover:underline flex items-center gap-1.5 truncate mr-2"
-                              >
+                              <a href={item.link.startsWith("http") ? item.link : `https://${item.link}`} target="_blank" rel="noopener noreferrer" className="text-xs text-teal hover:underline flex items-center gap-1.5 truncate mr-2">
                                 <ExternalLink size={13} /> Buka Link Marketplace
                               </a>
                             ) : (
