@@ -349,7 +349,6 @@ export default function AgrLedgerApp() {
     setTimeout(() => setError(""), 6000);
   }
 
-  // FIX: Logika posisi Pop up agar tidak tembus ke bawah layar
   function handleTogglePopup(e, monthLabel, breakdown, typeLabel) {
     e.stopPropagation();
     if (activePopup && activePopup.label === monthLabel && activePopup.typeLabel === typeLabel) {
@@ -357,13 +356,13 @@ export default function AgrLedgerApp() {
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    const width = 288; // w-72 adalah 288px di Tailwind
+    const width = 288; // Ukuran width pop-up (w-72 = 288px)
     let left = rect.left + rect.width / 2 - width / 2;
     left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
     
     let top = rect.bottom + 8;
     
-    // Estimasi apakah pop up akan terpotong oleh layar bawah. Jika sisa layar < 250px, paksa muncul di atas baris
+    // Cegah pop-up tembus layar bawah dengan menampilkannya di atas baris
     if (window.innerHeight - top < 250) {
       top = Math.max(12, rect.top - Math.min(300, window.innerHeight / 2) - 8);
     }
@@ -414,6 +413,13 @@ export default function AgrLedgerApp() {
     };
     reader.onerror = () => showError("Gagal membaca file.");
     reader.readAsText(file);
+  }
+
+  function handleImportFileChange(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    requestConfirm("Timpa Data?", "Mengimpor file ini akan mengganti seluruh data Ledger saat ini.", () => importDataFromFile(file));
   }
 
   const totals = useMemo(() => {
@@ -1248,8 +1254,6 @@ export default function AgrLedgerApp() {
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
         .font-display { font-family: system-ui, -apple-system, sans-serif; }
         .tabular { font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace; letter-spacing: -0.02em; }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .bg-ink { background: #0C0D0F; }
         .bg-surface { background: #141518; }
         .text-lime { color: #C8FF4D; }
@@ -1978,7 +1982,6 @@ export default function AgrLedgerApp() {
         <RoutineStopSheet item={routineStopTarget} onClose={() => setRoutineStopTarget(null)} onStop={(stopIdx) => { updateRoutineEntry(routineStopTarget.id, { stopIndex: stopIdx }); setRoutineStopTarget(null); }} />
       )}
 
-      {/* FIX: Hapus no-scrollbar di Riwayat Cicilan Selesai supaya scrollbar bisa terlihat */}
       {showSpaylaterHistory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
           <div className="w-full max-w-md bg-surface rounded-2xl p-6 border border-white/10 max-h-[80vh] flex flex-col">
@@ -2013,14 +2016,13 @@ export default function AgrLedgerApp() {
         </div>
       )}
 
-      {/* FIX: Ubah max-h-48 menjadi max-h-[50vh] dan hilangkan no-scrollbar supaya overflow tidak sembunyi/kepotong */}
       {activePopup && (
-        <div className="fixed z-50 w-72 bg-surface border border-white/15 rounded-xl shadow-2xl p-4 text-left" style={{ left: activePopup.left, top: activePopup.top }} onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+        <div className="fixed z-50 w-72 bg-surface border border-white/15 rounded-xl shadow-2xl p-4 text-left flex flex-col" style={{ left: activePopup.left, top: activePopup.top, maxHeight: '50vh' }} onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10 shrink-0">
             <span className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Rincian {activePopup.typeLabel} {activePopup.label}</span>
             <button onClick={() => setActivePopup(null)} className="text-white/40 hover:text-white p-0.5"><X size={14} /></button>
           </div>
-          <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+          <div className="space-y-2 overflow-y-auto pr-1 flex-1">
             {activePopup.breakdown.map((b, idx) => (
               <div key={b.id || idx} className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-white/70 truncate">{b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}</span>
@@ -2028,7 +2030,7 @@ export default function AgrLedgerApp() {
               </div>
             ))}
           </div>
-          <div className="flex items-center justify-between text-xs font-semibold mt-3 pt-2.5 border-t border-white/10">
+          <div className="flex items-center justify-between text-xs font-semibold mt-3 pt-2.5 border-t border-white/10 shrink-0">
             <span>Total</span><span className="tabular text-lime">{rupiah(activePopup.breakdown.reduce((s, b) => s + b.amount, 0))}</span>
           </div>
         </div>
@@ -2104,8 +2106,7 @@ function TopUpGoalSheet({ goal, onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      {/* Hapus no-scrollbar agar konsisten scroll terlihat di form */}
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">Nabung: {goal.name}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2128,7 +2129,7 @@ function AddRoutineSheet({ onClose, onSubmit, initialData }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{initialData ? "Edit Rutin" : "Tambah Pengeluaran Rutin"}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2236,7 +2237,7 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{title}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2403,7 +2404,7 @@ function AddOvertimeSheet({ onClose, onSubmit, initialData }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{initialData ? "Edit Lembur" : "Catat Lembur"}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
