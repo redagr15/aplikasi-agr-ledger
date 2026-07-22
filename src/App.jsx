@@ -30,6 +30,7 @@ import {
   ListChecks,
   AlertCircle,
   ExternalLink,
+  Briefcase,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -339,10 +340,6 @@ export default function AgrLedgerApp() {
 
   const [isEditingMonthlyBudget, setIsEditingMonthlyBudget] = useState(false);
   const [tempMonthlyBudget, setTempMonthlyBudget] = useState("");
-
-  // State untuk Edit Gaji Cepat di Beranda (Bulan Berjalan)
-  const [isEditingHomeSalary, setIsEditingHomeSalary] = useState(false);
-  const [tempHomeSalary, setTempHomeSalary] = useState("");
 
   const [editingWalletId, setEditingWalletId] = useState(null);
   const [editingWalletName, setEditingWalletName] = useState("");
@@ -766,7 +763,6 @@ export default function AgrLedgerApp() {
     return map;
   }, [data]);
 
-  // Total lembur per bulan (khusus overtime)
   const overtimeAmountByMonth = useMemo(() => {
     const map = {};
     if (Array.isArray(data?.overtimeEntries)) {
@@ -847,7 +843,6 @@ export default function AgrLedgerApp() {
         });
       }
 
-      // Gaji bersih = Total Gaji Input (resolvedGajiList) - Lembur
       const gajiKotor = resolvedGajiList[idx];
       const gajiBersih = Math.max(0, gajiKotor - totalLemburBulanIni);
 
@@ -1176,6 +1171,39 @@ export default function AgrLedgerApp() {
     });
   }
 
+  // Handler khusus untuk input Gaji dari menu Catat Transaksi
+  function addSalaryEntry({ amount, date }) {
+    if (!date || !amount) return;
+    const d = new Date(date + "T00:00:00");
+    if (isNaN(d.getTime())) return;
+    const year = d.getFullYear();
+    const monthName = MONTHS[d.getMonth()];
+
+    setData((prev) => {
+      const nextBudgetYears = { ...prev.budgetYears };
+      if (!nextBudgetYears[year]) {
+        nextBudgetYears[year] = emptyYearData(0);
+      } else {
+        nextBudgetYears[year] = {
+          ...nextBudgetYears[year],
+          months: { ...nextBudgetYears[year].months },
+        };
+      }
+      
+      // Update HANYA bulan tersebut, TIDAK mengubah bulan lain / bulan depan
+      const targetMonthData = nextBudgetYears[year].months[monthName] || { saldoAwal: 0, gaji: 0, keterangan: "" };
+      nextBudgetYears[year].months[monthName] = {
+        ...targetMonthData,
+        gaji: Number(amount) || 0,
+      };
+
+      return {
+        ...prev,
+        budgetYears: nextBudgetYears,
+      };
+    });
+  }
+
   function updateTransaction(id, updatedData) {
     setData((prev) => {
       const oldTx = prev.transactions.find((t) => t.id === id);
@@ -1310,13 +1338,11 @@ export default function AgrLedgerApp() {
       const rutList = routineByMonth[`${currentYearStr}-${index}`] || [];
       const totalRutinOtomatis = rutList.reduce((s, i) => s + i.amount, 0);
 
-      // Gaji Bersih = Total Gaji Input - Lembur Bulan Ini
       const gajiKotor = resolvedGajiList[index];
       const gajiBersih = Math.max(0, gajiKotor - totalLemburBulanIni);
 
       const row = {
         ...(rawMonths[m] || { saldoAwal: 0, keterangan: "" }),
-        gajiRaw: gajiKotor,
         gaji: gajiBersih,
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
@@ -1441,12 +1467,6 @@ export default function AgrLedgerApp() {
   const budgetYearsList = data ? Object.keys(data.budgetYears).sort() : [];
   const currentYearRoutineEntries = (data.routineEntries || []).filter(e => Number(e.activeYear || data.activeYear) === Number(data.activeYear));
 
-  // Ambil data gaji bulan berjalan (untuk ditampilkan di Beranda)
-  const currentMonthIndex = new Date().getMonth();
-  const currentMonthName = MONTHS[currentMonthIndex];
-  const currentYearStr = String(new Date().getFullYear());
-  const currentMonthSalary = data.budgetYears[currentYearStr]?.months[currentMonthName]?.gaji || 0;
-
   return (
     <div
       className="min-h-screen bg-ink text-white font-display"
@@ -1518,41 +1538,6 @@ export default function AgrLedgerApp() {
                   placeholder="Cari transaksi"
                   className="w-full bg-transparent border-b border-white/10 pl-6 pr-2 py-2 text-sm outline-none focus:border-lime placeholder:text-white/25 transition-colors"
                 />
-              </div>
-
-              {/* CARD INPUT GAJI BULAN BERJALAN DI BERANDA */}
-              <div className="mb-8 bg-surface border border-white/10 rounded-2xl p-4 md:p-5 flex items-center justify-between">
-                <div>
-                  <div className="text-[11px] uppercase tracking-wider text-white/40 font-medium mb-1">Total Gaji {currentMonthName} {new Date().getFullYear()}</div>
-                  {!isEditingHomeSalary ? (
-                    <div className="text-xl font-semibold tabular text-lime">
-                      {rupiah(currentMonthSalary)}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 mt-1">
-                      <input
-                        autoFocus
-                        type="text"
-                        inputMode="numeric"
-                        value={tempHomeSalary}
-                        onChange={(e) => setTempHomeSalary(formatRupiahInput(e.target.value))}
-                        placeholder="0"
-                        className="bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular w-36"
-                      />
-                      <button onClick={() => {
-                        const val = parseRupiahInput(tempHomeSalary);
-                        updateBudgetCell(new Date().getFullYear(), currentMonthName, "gaji", val);
-                        setIsEditingHomeSalary(false);
-                      }} className="bg-lime text-black p-1.5 rounded hover:scale-105 transition"><Check size={14} strokeWidth={2.5} /></button>
-                      <button onClick={() => setIsEditingHomeSalary(false)} className="text-white/40 hover:text-white p-1.5"><X size={14} /></button>
-                    </div>
-                  )}
-                </div>
-                {!isEditingHomeSalary && (
-                  <button onClick={() => { setIsEditingHomeSalary(true); setTempHomeSalary(formatRupiahInput(currentMonthSalary)); }} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition">
-                    <Edit2 size={13} /> Ubah Gaji
-                  </button>
-                )}
               </div>
 
               <div className="md:grid md:grid-cols-2 md:gap-x-14">
@@ -1913,12 +1898,12 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji (Otomatis Total Gaji - Lembur jika ada) */}
+                          {/* Gaji */}
                           <td className="py-1.5 pr-3 text-right">
                             <input
                               type="text"
                               inputMode="numeric"
-                              value={(row.gajiRaw || 0) === 0 ? "" : (row.gajiRaw || 0).toLocaleString("id-ID")}
+                              value={(row.gaji || 0) === 0 ? "" : (row.gaji || 0).toLocaleString("id-ID")}
                               onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
                               placeholder="0"
                               className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
@@ -2485,7 +2470,7 @@ export default function AgrLedgerApp() {
       )}
 
       {showAdd && (
-        <TransactionSheet wallets={data.wallets} title="Catat Transaksi" defaultType={addType} onClose={() => setShowAdd(false)} onSubmit={(payload) => { addTransaction(payload); setShowAdd(false); }} />
+        <TransactionSheet wallets={data.wallets} title="Catat Transaksi" defaultType={addType} onClose={() => setShowAdd(false)} onSubmit={(payload) => { addTransaction(payload); setShowAdd(false); }} onSalarySubmit={(payload) => { addSalaryEntry(payload); setShowAdd(false); }} />
       )}
 
       {editingTx && (
@@ -2549,6 +2534,114 @@ export default function AgrLedgerApp() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function TransactionSheet({ wallets, title, defaultType, initialData, onClose, onSubmit, onSalarySubmit }) {
+  const [type, setType] = useState(initialData?.type || defaultType || "expense");
+  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
+  const [category, setCategory] = useState(initialData?.category || CATEGORIES[0].id);
+  const [note, setNote] = useState(initialData?.note || "");
+  const [walletId, setWalletId] = useState(initialData?.walletId || wallets[0]?.id);
+  const [fromWalletId, setFromWalletId] = useState(initialData?.fromWalletId || wallets[0]?.id);
+  const [toWalletId, setToWalletId] = useState(initialData?.toWalletId || (wallets.length > 1 ? wallets[1].id : wallets[0]?.id));
+  const [date, setDate] = useState(initialData?.date || todayKey());
+
+  const canSubmit = parseRupiahInput(amount) > 0 && date && (type === "salary" ? true : type === "transfer" ? (fromWalletId && toWalletId && fromWalletId !== toWalletId) : walletId);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{title}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        
+        {/* Pilihan Jenis Transaksi termasuk Gaji */}
+        <div className="flex gap-1 bg-white/[0.04] rounded-lg p-1 mb-5 overflow-x-auto">
+          {[
+            { id: "expense", label: "Keluar" },
+            { id: "income", label: "Masuk" },
+            { id: "salary", label: "Gaji" },
+            { id: "transfer", label: "Transfer" },
+          ].map((t) => (
+            <button key={t.id} onClick={() => setType(t.id)} className={`flex-1 py-2 px-3 rounded-md text-xs font-medium whitespace-nowrap transition ${type === t.id ? "bg-lime text-black font-semibold" : "text-white/50 hover:text-white"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tanggal {type === "salary" ? "Gajian" : "Transaksi"}</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime text-white" />
+        
+        <label className="text-[11px] text-white/40 font-medium">{type === "salary" ? "Total Gaji (Rp)" : "Jumlah (Rp)"}</label>
+        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        {type === "expense" && (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Kategori</label>
+            <div className="grid grid-cols-3 gap-2 mt-1.5 mb-5">
+              {CATEGORIES.map((c) => (
+                <button key={c.id} onClick={() => setCategory(c.id)} className="rounded-lg px-2 py-2.5 text-xs font-medium border transition" style={category === c.id ? { backgroundColor: c.color, borderColor: c.color, color: "#0C0D0F" } : { backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)" }}>
+                  <div className="text-base mb-0.5">{c.emoji}</div>{c.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {type === "transfer" ? (
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <div>
+              <label className="text-[11px] text-white/40 font-medium">Dari Dompet</label>
+              <div className="flex flex-col gap-1.5 mt-1.5">
+                {wallets.map((w) => (
+                  <button key={w.id} onClick={() => setFromWalletId(w.id)} className={`truncate rounded-lg px-3 py-2.5 text-xs font-medium border ${fromWalletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-[11px] text-white/40 font-medium">Ke Dompet</label>
+              <div className="flex flex-col gap-1.5 mt-1.5">
+                {wallets.map((w) => (
+                  <button key={w.id} onClick={() => setToWalletId(w.id)} className={`truncate rounded-lg px-3 py-2.5 text-xs font-medium border ${toWalletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : type !== "salary" ? (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Dompet</label>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-1.5 mb-5">
+              {wallets.map((w) => (
+                <button key={w.id} onClick={() => setWalletId(w.id)} className={`truncate rounded-lg px-3 py-2 text-xs font-medium border ${walletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
+              ))}
+            </div>
+          </>
+        ) : null}
+
+        {type !== "salary" && (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Catatan (opsional)</label>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan transaksi" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
+          </>
+        )}
+
+        <button 
+          disabled={!canSubmit} 
+          onClick={() => {
+            if (type === "salary") {
+              onSalarySubmit({ amount: parseRupiahInput(amount), date });
+            } else {
+              onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date });
+            }
+          }} 
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2"
+        >
+          Simpan {type === "salary" ? "Gaji" : "Transaksi"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -2655,211 +2748,6 @@ function AddTaskSheet({ onClose, onSubmit, initialData }) {
   );
 }
 
-function TopUpGoalSheet({ goal, onClose, onSubmit }) {
-  const [amount, setAmount] = useState("");
-  const canSubmit = parseRupiahInput(amount) > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Nabung: {goal.name}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <div className="text-[11px] text-white/40 mb-1">Terkumpul: {rupiah(goal.saved)}</div>
-        <label className="text-[11px] text-white/40 font-medium">Nominal ditabung (Rp)</label>
-        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus-lime" autoFocus />
-        <button disabled={!canSubmit} onClick={() => onSubmit(parseRupiahInput(amount))} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 flex items-center justify-center gap-1.5">Tambah <ChevronRight size={16} /></button>
-      </div>
-    </div>
-  );
-}
-
-function AddRoutineSheet({ onClose, onSubmit, initialData }) {
-  const [name, setName] = useState(initialData?.name || "");
-  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
-  const [startIndex, setStartIndex] = useState(initialData?.startIndex !== undefined ? String(initialData.startIndex) : "0");
-
-  const canSubmit = name.trim() && parseRupiahInput(amount) > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">{initialData ? "Edit Rutin" : "Tambah Pengeluaran Rutin"}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-
-        <label className="text-[11px] text-white/40 font-medium">Nama Pengeluaran Rutin</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Wifi / Listrik" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
-
-        <label className="text-[11px] text-white/40 font-medium">Mulai Dari Bulan Berapa?</label>
-        <select value={startIndex} onChange={(e) => setStartIndex(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime text-white">
-          {MONTHS.map((m, idx) => (
-            <option key={idx} value={String(idx)} className="bg-surface text-white">
-              {m}
-            </option>
-          ))}
-        </select>
-
-        <label className="text-[11px] text-white/40 font-medium">Nominal Per Bulan (Rp)</label>
-        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus:border-lime" />
-
-        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), amount: parseRupiahInput(amount), startIndex: Number(startIndex) })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan</button>
-      </div>
-    </div>
-  );
-}
-
-function RoutineStopSheet({ item, onClose, onStop }) {
-  const [stopIndex, setStopIndex] = useState(String(Math.max(item.startIndex || 0, new Date().getMonth())));
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
-        <div className="flex items-center justify-between mb-4">
-          <div className="font-semibold text-base">Stop Berlangganan: {item.name}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <p className="text-xs text-white/60 mb-4 leading-relaxed">Pilih bulan terakhir pengeluaran rutin ini aktif. Bulan-bulan sebelumnya di tabel anggaran akan tetap aman/tersimpan, namun mulai bulan berikutnya otomatis berhenti.</p>
-
-        <label className="text-[11px] text-white/40 font-medium">Aktif Terakhir Sampai Bulan:</label>
-        <select value={stopIndex} onChange={(e) => setStopIndex(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime text-white">
-          {MONTHS.map((m, idx) => {
-            if (idx < (item.startIndex || 0)) return null;
-            return (
-              <option key={idx} value={String(idx)} className="bg-surface text-white">
-                {m}
-              </option>
-            );
-          })}
-        </select>
-
-        <button onClick={() => onStop(Number(stopIndex))} className="w-full bg-coral text-black font-semibold rounded-lg py-3.5 text-xs">Terapkan Stop Berlangganan</button>
-      </div>
-    </div>
-  );
-}
-
-function AddSpaylaterSheet({ onClose, onSubmit }) {
-  const [name, setName] = useState("");
-  const [totalAmount, setTotalAmount] = useState("");
-  const [tenor, setTenor] = useState("3");
-  const today = new Date();
-  const defaultDate = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-  const [purchaseDate, setPurchaseDate] = useState(defaultDate);
-
-  const canSubmit = name.trim() && parseRupiahInput(totalAmount) > 0 && Number(tenor) > 0 && purchaseDate;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Tambah Cicilan SPayLater</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">Nama Barang</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Checkout Shopee" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Tanggal Pembelian</label>
-        <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Total Harga (Rp)</label>
-        <input type="text" inputMode="numeric" value={totalAmount} onChange={(e) => setTotalAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Tenor (Bulan)</label>
-        <div className="flex gap-2 mt-1.5 mb-6">
-          {["1", "3", "6", "12"].map((t) => (
-            <button key={t} onClick={() => setTenor(t)} className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${tenor === t ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>
-              {t === "1" ? "1x" : `${t} Bln`}
-            </button>
-          ))}
-        </div>
-        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), totalAmount: parseRupiahInput(totalAmount), tenor: Number(tenor), purchaseDate })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan Cicilan</button>
-      </div>
-    </div>
-  );
-}
-
-function TransactionSheet({ wallets, title, defaultType, initialData, onClose, onSubmit }) {
-  const [type, setType] = useState(initialData?.type || defaultType || "expense");
-  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
-  const [category, setCategory] = useState(initialData?.category || CATEGORIES[0].id);
-  const [note, setNote] = useState(initialData?.note || "");
-  const [walletId, setWalletId] = useState(initialData?.walletId || wallets[0]?.id);
-  const [fromWalletId, setFromWalletId] = useState(initialData?.fromWalletId || wallets[0]?.id);
-  const [toWalletId, setToWalletId] = useState(initialData?.toWalletId || (wallets.length > 1 ? wallets[1].id : wallets[0]?.id));
-  const [date, setDate] = useState(initialData?.date || todayKey());
-
-  const canSubmit = parseRupiahInput(amount) > 0 && date && (type === "transfer" ? (fromWalletId && toWalletId && fromWalletId !== toWalletId) : walletId);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">{title}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <div className="flex bg-white/[0.04] rounded-lg p-1 mb-5">
-          {["expense", "income", "transfer"].map((t) => (
-            <button key={t} onClick={() => setType(t)} className={`flex-1 py-2 rounded-md text-[13px] font-medium ${type === t ? "bg-lime text-black" : "text-white/50"}`}>
-              {t === "expense" ? "Pengeluaran" : t === "income" ? "Pemasukan" : "Transfer"}
-            </button>
-          ))}
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">Tanggal Transaksi</label>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime text-white" />
-        <label className="text-[11px] text-white/40 font-medium">Jumlah</label>
-        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
-
-        {type === "expense" && (
-          <>
-            <label className="text-[11px] text-white/40 font-medium">Kategori</label>
-            <div className="grid grid-cols-3 gap-2 mt-1.5 mb-5">
-              {CATEGORIES.map((c) => (
-                <button key={c.id} onClick={() => setCategory(c.id)} className="rounded-lg px-2 py-2.5 text-xs font-medium border transition" style={category === c.id ? { backgroundColor: c.color, borderColor: c.color, color: "#0C0D0F" } : { backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)" }}>
-                  <div className="text-base mb-0.5">{c.emoji}</div>{c.label}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {type === "transfer" ? (
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            <div>
-              <label className="text-[11px] text-white/40 font-medium">Dari Dompet</label>
-              <div className="flex flex-col gap-1.5 mt-1.5">
-                {wallets.map((w) => (
-                  <button key={w.id} onClick={() => setFromWalletId(w.id)} className={`truncate rounded-lg px-3 py-2.5 text-xs font-medium border ${fromWalletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-[11px] text-white/40 font-medium">Ke Dompet</label>
-              <div className="flex flex-col gap-1.5 mt-1.5">
-                {wallets.map((w) => (
-                  <button key={w.id} onClick={() => setToWalletId(w.id)} className={`truncate rounded-lg px-3 py-2.5 text-xs font-medium border ${toWalletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            <label className="text-[11px] text-white/40 font-medium">Dompet</label>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-1.5 mb-5">
-              {wallets.map((w) => (
-                <button key={w.id} onClick={() => setWalletId(w.id)} className={`truncate rounded-lg px-3 py-2 text-xs font-medium border ${walletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
-              ))}
-            </div>
-          </>
-        )}
-
-        <label className="text-[11px] text-white/40 font-medium">Catatan (opsional)</label>
-        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan transaksi" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
-        <button disabled={!canSubmit} onClick={() => onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan</button>
-      </div>
-    </div>
-  );
-}
-
 function AddWalletSheet({ onClose, onSubmit }) {
   const [name, setName] = useState("");
   return (
@@ -2872,23 +2760,6 @@ function AddWalletSheet({ onClose, onSubmit }) {
         <label className="text-[11px] text-white/40 font-medium">Nama dompet</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Rekening BCA" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
         <button disabled={!name.trim()} onClick={() => onSubmit(name.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Dompet</button>
-      </div>
-    </div>
-  );
-}
-
-function SingleFieldSheet({ title, label, placeholder, submitLabel, onClose, onSubmit }) {
-  const [value, setValue] = useState("");
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">{title}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">{label}</label>
-        <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={placeholder} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
-        <button disabled={!value.trim()} onClick={() => onSubmit(value.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">{submitLabel}</button>
       </div>
     </div>
   );
