@@ -296,7 +296,6 @@ export default function AgrLedgerApp() {
   const [loaded, setLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState("home");
 
-  // Ref & State untuk Swipe Gesture HP
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
   const ignoreSwipeRef = useRef(false);
@@ -357,7 +356,6 @@ export default function AgrLedgerApp() {
   const [activePopup, setActivePopup] = useState(null);
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
 
-  // Fungsi Handler Swipe Gesture
   function handleTouchStart(e) {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
@@ -371,7 +369,7 @@ export default function AgrLedgerApp() {
     touchStartX.current = null;
     touchStartY.current = null;
 
-    if (ignoreSwipeRef.current) return; // Abaikan jika dimulai dari area scroll horizontal (tabel)
+    if (ignoreSwipeRef.current) return;
 
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
 
@@ -744,46 +742,39 @@ export default function AgrLedgerApp() {
     const map = {};
     const rawMap = {};
 
-    if (Array.isArray(data?.overtimeEntries)) {
-      data.overtimeEntries.forEach((item) => {
-        if (!item || !item.paid) return; 
-        const target = item.targetMonth || (item.date ? item.date.slice(0, 7) : todayKey().slice(0, 7));
-        const [y, m] = target.split("-").map(Number);
-        const key = `${y}-${m - 1}`;
-        if (!rawMap[key]) rawMap[key] = { biasa: 0, libur: 0, others: [] };
-        
-        const { amount } = computeOvertime(data.overtimeRate || 0, item.jenis, item.totalJam || 0);
-        if (item.jenis === "Biasa") {
-          rawMap[key].biasa += amount;
-        } else {
-          rawMap[key].libur += amount;
-        }
-      });
-    }
-
     if (Array.isArray(data?.transactions)) {
       data.transactions.forEach((item) => {
         if (item && item.type === "income" && item.date) {
           const d = new Date(item.date + "T00:00:00");
           if (isNaN(d.getTime())) return;
           const key = `${d.getFullYear()}-${d.getMonth()}`;
-          if (!rawMap[key]) rawMap[key] = { biasa: 0, libur: 0, others: [] };
-          rawMap[key].others.push({ id: item.id, name: item.note || "Pemasukan", amount: item.amount || 0 });
+          if (!rawMap[key]) rawMap[key] = [];
+          rawMap[key].push({ id: item.id, name: item.note || "Pemasukan", amount: item.amount || 0 });
         }
       });
     }
 
     Object.keys(rawMap).forEach(key => {
       map[key] = [];
-      if (rawMap[key].biasa > 0) {
-        map[key].push({ id: `lembur-biasa-${key}`, name: "Lembur (Biasa)", amount: rawMap[key].biasa });
-      }
-      if (rawMap[key].libur > 0) {
-        map[key].push({ id: `lembur-libur-${key}`, name: "Lembur (Libur)", amount: rawMap[key].libur });
-      }
-      rawMap[key].others.forEach(o => map[key].push(o));
+      rawMap[key].forEach(o => map[key].push(o));
     });
 
+    return map;
+  }, [data]);
+
+  // Memo baru: Total lembur per bulan (khusus overtime, terpisah dari income lain)
+  const overtimeAmountByMonth = useMemo(() => {
+    const map = {};
+    if (Array.isArray(data?.overtimeEntries)) {
+      data.overtimeEntries.forEach((item) => {
+        if (!item || !item.paid) return;
+        const target = item.targetMonth || (item.date ? item.date.slice(0, 7) : todayKey().slice(0, 7));
+        const [y, m] = target.split("-").map(Number);
+        const key = `${y}-${m - 1}`;
+        const { amount } = computeOvertime(data.overtimeRate || 0, item.jenis, item.totalJam || 0);
+        map[key] = (map[key] || 0) + amount;
+      });
+    }
     return map;
   }, [data]);
 
@@ -836,6 +827,8 @@ export default function AgrLedgerApp() {
       const incList = gajiTambahanByMonth[`${yearKey}-${idx}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
 
+      const totalLemburBulanIni = overtimeAmountByMonth[`${yearKey}-${idx}`] || 0;
+
       let totalRutinOtomatis = 0;
       if (Array.isArray(data?.routineEntries)) {
         data.routineEntries.forEach((item) => {
@@ -852,7 +845,7 @@ export default function AgrLedgerApp() {
 
       const mRow = { 
         ...yearMonths[m], 
-        gaji: resolvedGajiList[idx],
+        gaji: resolvedGajiList[idx] - totalLemburBulanIni,
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
         gajiTambahan: totalGajiTambahanOtomatis,
@@ -1304,12 +1297,15 @@ export default function AgrLedgerApp() {
       const incList = gajiTambahanByMonth[`${currentYearStr}-${index}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
 
+      const totalLemburBulanIni = overtimeAmountByMonth[`${currentYearStr}-${index}`] || 0;
+
       const rutList = routineByMonth[`${currentYearStr}-${index}`] || [];
       const totalRutinOtomatis = rutList.reduce((s, i) => s + i.amount, 0);
 
       const row = {
         ...(rawMonths[m] || { saldoAwal: 0, keterangan: "" }),
-        gaji: resolvedGajiList[index],
+        gajiRaw: resolvedGajiList[index],
+        gaji: resolvedGajiList[index] - totalLemburBulanIni,
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
         gajiTambahan: totalGajiTambahanOtomatis,
@@ -1328,7 +1324,7 @@ export default function AgrLedgerApp() {
     });
 
     return computedMonths;
-  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth]);
+  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth, overtimeAmountByMonth]);
 
   const budgetTrendData = useMemo(() => {
     if (!resolvedMonthsData) return [];
@@ -1829,7 +1825,7 @@ export default function AgrLedgerApp() {
                     <tr className="text-white/40 text-left border-b border-white/10">
                       <th className="py-2 pr-3 font-normal">Bulan</th>
                       <th className="py-2 pr-3 font-normal text-right">Saldo Awal</th>
-                      <th className="py-2 pr-3 font-normal text-right">Gaji</th>
+                      <th className="py-2 pr-3 font-normal text-right">Total Gaji</th>
                       <th className="py-2 pr-3 font-normal text-right">Gaji Tambahan</th>
                       <th className="py-2 pr-3 font-normal text-right">Rutin</th>
                       <th className="py-2 pr-3 font-normal text-right">Cicilan</th>
@@ -1864,16 +1860,19 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji Pokok */}
-                          <td className="py-1.5 pr-3">
+                          {/* Total Gaji Diterima */}
+                          <td className="py-1.5 pr-3 text-right">
                             <input
                               type="text"
                               inputMode="numeric"
-                              value={(row.gaji || 0) === 0 ? "" : (row.gaji || 0).toLocaleString("id-ID")}
+                              value={(row.gajiRaw || 0) === 0 ? "" : (row.gajiRaw || 0).toLocaleString("id-ID")}
                               onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
                               placeholder="0"
                               className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
                             />
+                            {overtimeAmountByMonth[`${data.activeYear}-${index}`] > 0 && (
+                              <div className="text-[9px] text-white/30 text-right tabular whitespace-nowrap">bersih: {(row.gaji || 0).toLocaleString("id-ID")}</div>
+                            )}
                           </td>
 
                           {/* Gaji Tambahan */}
