@@ -329,7 +329,6 @@ export default function AgrLedgerApp() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [activePopup]);
 
-  // FIX 1: Gunakan .upsert() daripada .update()
   useEffect(() => {
     if (!loaded || !data) return;
     const timeout = setTimeout(async () => {
@@ -350,6 +349,7 @@ export default function AgrLedgerApp() {
     setTimeout(() => setError(""), 6000);
   }
 
+  // FIX: Logika posisi Pop up agar tidak tembus ke bawah layar
   function handleTogglePopup(e, monthLabel, breakdown, typeLabel) {
     e.stopPropagation();
     if (activePopup && activePopup.label === monthLabel && activePopup.typeLabel === typeLabel) {
@@ -357,10 +357,16 @@ export default function AgrLedgerApp() {
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    const width = 260;
+    const width = 288; // w-72 adalah 288px di Tailwind
     let left = rect.left + rect.width / 2 - width / 2;
     left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+    
     let top = rect.bottom + 8;
+    
+    // Estimasi apakah pop up akan terpotong oleh layar bawah. Jika sisa layar < 250px, paksa muncul di atas baris
+    if (window.innerHeight - top < 250) {
+      top = Math.max(12, rect.top - Math.min(300, window.innerHeight / 2) - 8);
+    }
     
     setActivePopup({ left, top, label: monthLabel, breakdown, typeLabel });
   }
@@ -408,13 +414,6 @@ export default function AgrLedgerApp() {
     };
     reader.onerror = () => showError("Gagal membaca file.");
     reader.readAsText(file);
-  }
-
-  function handleImportFileChange(e) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    requestConfirm("Timpa Data?", "Mengimpor file ini akan mengganti seluruh data Ledger saat ini.", () => importDataFromFile(file));
   }
 
   const totals = useMemo(() => {
@@ -798,7 +797,6 @@ export default function AgrLedgerApp() {
     setIsDeleteMode(false);
   }
 
-  // FIX 2: Modifikasi Rutin agar otomatis masuk juga ke tahun-tahun depan yang sudah dibuat.
   function addRoutineEntry({ name, amount, startIndex }) {
     setData((prev) => {
       const activeY = Number(prev.activeYear);
@@ -836,11 +834,9 @@ export default function AgrLedgerApp() {
       const isStopping = updatedData.stopIndex !== undefined;
 
       const newEntries = prev.routineEntries.map((e) => {
-        // Jika ini adalah entry spesifik yg di-edit
         if (e.id === id) {
           return { ...e, ...updatedData };
         }
-        // Jika ini perubahan nama/amount, terapkan juga di tahun berikutnya agar sinkron
         if (!isStopping && e.name === targetEntry.name && Number(e.activeYear) > currentActiveYear) {
           return { 
             ...e, 
@@ -851,7 +847,6 @@ export default function AgrLedgerApp() {
         return e;
       });
 
-      // Jika kita menghentikan (stop) rutin di tahun ini, hapus entry rutin tersebut dari tahun-tahun depan
       let finalEntries = newEntries;
       if (isStopping && updatedData.stopIndex < 11) {
         finalEntries = finalEntries.filter(e => !(e.name === targetEntry.name && Number(e.activeYear) > currentActiveYear));
@@ -866,7 +861,6 @@ export default function AgrLedgerApp() {
       const targetEntry = prev.routineEntries.find(e => e.id === id);
       if (!targetEntry) return prev;
       
-      // Hapus entry ini dan entry duplikat (yang bersambung) di tahun-tahun berikutnya
       return {
         ...prev,
         routineEntries: prev.routineEntries.filter((e) => 
@@ -1984,6 +1978,7 @@ export default function AgrLedgerApp() {
         <RoutineStopSheet item={routineStopTarget} onClose={() => setRoutineStopTarget(null)} onStop={(stopIdx) => { updateRoutineEntry(routineStopTarget.id, { stopIndex: stopIdx }); setRoutineStopTarget(null); }} />
       )}
 
+      {/* FIX: Hapus no-scrollbar di Riwayat Cicilan Selesai supaya scrollbar bisa terlihat */}
       {showSpaylaterHistory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
           <div className="w-full max-w-md bg-surface rounded-2xl p-6 border border-white/10 max-h-[80vh] flex flex-col">
@@ -1991,7 +1986,7 @@ export default function AgrLedgerApp() {
               <div className="font-semibold text-base flex items-center gap-2"><History size={16} className="text-lime" /> Riwayat Cicilan Selesai</div>
               <button onClick={() => setShowSpaylaterHistory(false)} className="text-white/40 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="space-y-3 overflow-y-auto no-scrollbar flex-1 pr-1">
+            <div className="space-y-3 overflow-y-auto flex-1 pr-1">
               {data.spaylater?.filter(item => item.isFinished).length === 0 ? (
                 <div className="text-xs text-white/40 text-center py-8">Riwayat kosong</div>
               ) : (
@@ -2018,13 +2013,14 @@ export default function AgrLedgerApp() {
         </div>
       )}
 
+      {/* FIX: Ubah max-h-48 menjadi max-h-[50vh] dan hilangkan no-scrollbar supaya overflow tidak sembunyi/kepotong */}
       {activePopup && (
         <div className="fixed z-50 w-72 bg-surface border border-white/15 rounded-xl shadow-2xl p-4 text-left" style={{ left: activePopup.left, top: activePopup.top }} onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
             <span className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Rincian {activePopup.typeLabel} {activePopup.label}</span>
             <button onClick={() => setActivePopup(null)} className="text-white/40 hover:text-white p-0.5"><X size={14} /></button>
           </div>
-          <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar">
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
             {activePopup.breakdown.map((b, idx) => (
               <div key={b.id || idx} className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-white/70 truncate">{b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}</span>
@@ -2108,7 +2104,8 @@ function TopUpGoalSheet({ goal, onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+      {/* Hapus no-scrollbar agar konsisten scroll terlihat di form */}
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">Nabung: {goal.name}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2131,7 +2128,7 @@ function AddRoutineSheet({ onClose, onSubmit, initialData }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{initialData ? "Edit Rutin" : "Tambah Pengeluaran Rutin"}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2163,7 +2160,7 @@ function RoutineStopSheet({ item, onClose, onStop }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-4">
           <div className="font-semibold text-base">Stop Berlangganan: {item.name}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2200,7 +2197,7 @@ function AddSpaylaterSheet({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">Tambah Cicilan SPayLater</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2239,7 +2236,7 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{title}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2328,7 +2325,7 @@ function SingleFieldSheet({ title, label, placeholder, submitLabel, onClose, onS
   const [value, setValue] = useState("");
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{title}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2348,7 +2345,7 @@ function AddWishlistItemSheet({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">Tambah Barang</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2406,7 +2403,7 @@ function AddOvertimeSheet({ onClose, onSubmit, initialData }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{initialData ? "Edit Lembur" : "Catat Lembur"}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2464,7 +2461,7 @@ function AddGoalSheet({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">Tambah Target Tabungan</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
