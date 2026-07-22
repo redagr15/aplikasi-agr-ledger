@@ -126,6 +126,7 @@ const seedData = () => ({
   spaylater: [],
   routineEntries: [],
   tasks: [],
+  salaryEntries: [],
 });
 
 function migrateData(raw) {
@@ -163,6 +164,22 @@ function migrateData(raw) {
   if (!Array.isArray(merged.spaylater)) merged.spaylater = [];
   if (!Array.isArray(merged.routineEntries)) merged.routineEntries = [];
   if (!Array.isArray(merged.tasks)) merged.tasks = [];
+  if (!Array.isArray(merged.salaryEntries)) merged.salaryEntries = [];
+
+  if (merged.salaryEntries.length === 0) {
+    for (const y of Object.keys(merged.budgetYears)) {
+      MONTHS.forEach((m, idx) => {
+        const g = merged.budgetYears[y].months[m]?.gaji;
+        if (g && g > 0) {
+          merged.salaryEntries.push({
+            id: crypto.randomUUID(),
+            amount: g,
+            date: `${y}-${String(idx + 1).padStart(2, "0")}-01`,
+          });
+        }
+      });
+    }
+  }
 
   merged.tasks = merged.tasks.map(t => ({
     id: t.id || crypto.randomUUID(),
@@ -667,14 +684,7 @@ export default function AgrLedgerApp() {
   function updateBudgetCell(year, month, field, value) {
     setData((prev) => {
       const yearMonths = { ...prev.budgetYears[year].months };
-      const monthIndex = MONTHS.indexOf(month);
-
-      if (field === "gaji") {
-        yearMonths[month] = { ...yearMonths[month], gaji: value };
-      } else {
-        yearMonths[month] = { ...yearMonths[month], [field]: value };
-      }
-
+      yearMonths[month] = { ...yearMonths[month], [field]: value };
       return {
         ...prev,
         budgetYears: {
@@ -759,6 +769,19 @@ export default function AgrLedgerApp() {
     return map;
   }, [data]);
 
+  const salaryByMonth = useMemo(() => {
+    const map = {};
+    (data?.salaryEntries || []).forEach((item) => {
+      if (!item?.date) return;
+      const d = new Date(item.date + "T00:00:00");
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (!map[key]) map[key] = [];
+      map[key].push({ id: item.id, name: formatDateID(item.date), amount: item.amount });
+    });
+    return map;
+  }, [data]);
+
   const overtimeAmountByMonth = useMemo(() => {
     const map = {};
     if (Array.isArray(data?.overtimeEntries)) {
@@ -838,7 +861,8 @@ export default function AgrLedgerApp() {
         });
       }
 
-      const rawGajiKotor = yearMonths[m]?.gaji || 0;
+      const salList = salaryByMonth[`${yearKey}-${idx}`] || [];
+      const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
       const gajiBersih = Math.max(0, rawGajiKotor - totalLemburBulanIni);
 
       const mRow = { 
@@ -1144,34 +1168,20 @@ export default function AgrLedgerApp() {
 
   function addSalaryEntry({ amount, date }) {
     if (!date || !amount) return;
-    const d = new Date(date + "T00:00:00");
-    if (isNaN(d.getTime())) return;
-    const year = d.getFullYear();
-    const monthName = MONTHS[d.getMonth()];
+    setData((prev) => ({
+      ...prev,
+      salaryEntries: [
+        { id: crypto.randomUUID(), amount: Number(amount) || 0, date },
+        ...(prev.salaryEntries || []),
+      ],
+    }));
+  }
 
-    setData((prev) => {
-      const nextBudgetYears = { ...prev.budgetYears };
-      if (!nextBudgetYears[year]) {
-        nextBudgetYears[year] = emptyYearData(0);
-      } else {
-        nextBudgetYears[year] = {
-          ...nextBudgetYears[year],
-          months: { ...nextBudgetYears[year].months },
-        };
-      }
-      
-      // Mengisi Gaji kotor HANYA pada bulan tersebut tanpa mengubah bulan depan/lainnya
-      const targetMonthData = nextBudgetYears[year].months[monthName] || { saldoAwal: 0, gaji: 0, keterangan: "" };
-      nextBudgetYears[year].months[monthName] = {
-        ...targetMonthData,
-        gaji: Number(amount) || 0,
-      };
-
-      return {
-        ...prev,
-        budgetYears: nextBudgetYears,
-      };
-    });
+  function deleteSalaryEntry(id) {
+    setData((prev) => ({
+      ...prev,
+      salaryEntries: (prev.salaryEntries || []).filter((e) => e.id !== id),
+    }));
   }
 
   function updateTransaction(id, updatedData) {
@@ -1307,7 +1317,8 @@ export default function AgrLedgerApp() {
       const rutList = routineByMonth[`${currentYearStr}-${index}`] || [];
       const totalRutinOtomatis = rutList.reduce((s, i) => s + i.amount, 0);
 
-      const rawGajiKotor = rawMonths[m]?.gaji || 0;
+      const salList = salaryByMonth[`${currentYearStr}-${index}`] || [];
+      const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
       const gajiBersih = Math.max(0, rawGajiKotor - totalLemburBulanIni);
 
       const row = {
@@ -1331,7 +1342,7 @@ export default function AgrLedgerApp() {
     });
 
     return computedMonths;
-  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth, overtimeAmountByMonth]);
+  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth, overtimeAmountByMonth, salaryByMonth]);
 
   const budgetTrendData = useMemo(() => {
     if (!resolvedMonthsData) return [];
@@ -1848,7 +1859,8 @@ export default function AgrLedgerApp() {
                       const currentYearStr = String(data.activeYear);
                       const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
                       const isFirstYear = sortedYears[0] === Number(currentYearStr);
-                      const rawGajiKotor = data.budgetYears[currentYearStr]?.months[m]?.gaji || 0;
+                      const salList = salaryByMonth[`${data.activeYear}-${index}`] || [];
+                      const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
                       const lemburBulanIni = overtimeAmountByMonth[`${data.activeYear}-${index}`] || 0;
 
                       return (
@@ -1869,16 +1881,18 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji Kotor & Bersih (dikurangi lembur jika ada) */}
+                          {/* Gaji Read-only, diklik muncul popup rincian */}
                           <td className="py-1.5 pr-3 text-right">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={rawGajiKotor === 0 ? "" : rawGajiKotor.toLocaleString("id-ID")}
-                              onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
-                              placeholder="0"
-                              className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
-                            />
+                            {rawGajiKotor > 0 ? (
+                              <span
+                                className="cursor-pointer border-b border-dotted border-lime/50 inline-block py-0.5 tabular text-lime font-medium"
+                                onClick={(e) => handleTogglePopup(e, m, salaryByMonth[`${data.activeYear}-${index}`] || [], "Gaji")}
+                              >
+                                {rawGajiKotor.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span className="text-white/30">0</span>
+                            )}
                             {lemburBulanIni > 0 && (
                               <div className="text-[9px] text-white/35 text-right tabular whitespace-nowrap">
                                 bersih: {row.gaji.toLocaleString("id-ID")}
@@ -2415,7 +2429,12 @@ export default function AgrLedgerApp() {
             {activePopup.breakdown.map((b, idx) => (
               <div key={b.id || idx} className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-white/70 truncate">{b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}</span>
-                <span className={`tabular shrink-0 ${b.paid ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className={`tabular ${b.paid ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
+                  {activePopup.typeLabel === "Gaji" && (
+                    <button onClick={() => { deleteSalaryEntry(b.id); setActivePopup(null); }} className="text-white/30 hover:text-coral"><Trash2 size={12} /></button>
+                  )}
+                </span>
               </div>
             ))}
           </div>
@@ -2531,7 +2550,6 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
         </div>
         
-        {/* Pilihan Jenis Transaksi */}
         <div className="flex gap-1 bg-white/[0.04] rounded-lg p-1 mb-5 overflow-x-auto">
           {[
             { id: "expense", label: "Keluar" },
@@ -2597,7 +2615,7 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
         {type !== "salary" && (
           <>
             <label className="text-[11px] text-white/40 font-medium">Catatan (opsional)</label>
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan transaksi" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan transaksi" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xs outline-none focus-lime" />
           </>
         )}
 
@@ -2610,7 +2628,7 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
               onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date });
             }
           }} 
-          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2"
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2 text-xs"
         >
           Simpan {type === "salary" ? "Gaji" : "Transaksi"}
         </button>
