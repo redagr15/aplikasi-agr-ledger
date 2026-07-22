@@ -61,6 +61,8 @@ const MONTHS = [
   "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ];
 
+const TAB_ORDER = ["home", "budget", "tasks", "wishlist", "lembur"];
+
 const rupiah = (n) =>
   "Rp" + Math.round(n || 0).toLocaleString("id-ID");
 
@@ -297,6 +299,7 @@ export default function AgrLedgerApp() {
   // Ref & State untuk Swipe Gesture HP
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
+  const ignoreSwipeRef = useRef(false);
 
   const [showAdd, setShowAdd] = useState(false);
   const [addType, setAddType] = useState("expense");
@@ -355,35 +358,29 @@ export default function AgrLedgerApp() {
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
 
   // Fungsi Handler Swipe Gesture
-  const tabOrder = ["home", "budget", "tasks", "wishlist", "lembur"];
-
   function handleTouchStart(e) {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
+    ignoreSwipeRef.current = !!e.target.closest(".swipe-ignore");
   }
 
   function handleTouchEnd(e) {
-    if (touchStartX.current === null || touchStartY.current === null) return;
-    const diffX = e.changedTouches[0].clientX - touchStartX.current;
-    const diffY = e.changedTouches[0].clientY - touchStartY.current;
-
-    // Pastikan gerakan horizontal lebih dominan daripada vertikal agar tidak bentrok dengan scroll
-    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
-      const currentIndex = tabOrder.indexOf(activeTab);
-      if (diffX < 0) {
-        // Swipe Kiri -> Tab Berikutnya
-        if (currentIndex < tabOrder.length - 1) {
-          setActiveTab(tabOrder[currentIndex + 1]);
-        }
-      } else {
-        // Swipe Kanan -> Tab Sebelumnya
-        if (currentIndex > 0) {
-          setActiveTab(tabOrder[currentIndex - 1]);
-        }
-      }
-    }
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const dy = e.changedTouches[0].clientY - touchStartY.current;
     touchStartX.current = null;
     touchStartY.current = null;
+
+    if (ignoreSwipeRef.current) return; // Abaikan jika dimulai dari area scroll horizontal (tabel)
+
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+
+    const currentIndex = TAB_ORDER.indexOf(activeTab);
+    if (dx < 0 && currentIndex < TAB_ORDER.length - 1) {
+      setActiveTab(TAB_ORDER[currentIndex + 1]);
+    } else if (dx > 0 && currentIndex > 0) {
+      setActiveTab(TAB_ORDER[currentIndex - 1]);
+    }
   }
 
   useEffect(() => {
@@ -1461,6 +1458,14 @@ export default function AgrLedgerApp() {
         input[type=checkbox].accent-lime { accent-color: #C8FF4D; }
         input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
         select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
+
+        @keyframes tabFadeSlide {
+          from { opacity: 0; transform: translateX(8px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        .tab-content {
+          animation: tabFadeSlide 0.25s ease-out;
+        }
       `}</style>
 
       <div className="w-full max-w-md md:max-w-5xl mx-auto px-5 md:px-8 pt-7 pb-32">
@@ -1488,123 +1493,155 @@ export default function AgrLedgerApp() {
 
         <TopTabs active={activeTab} onChange={setActiveTab} />
 
-        {activeTab === "home" && (
-          <>
-            <div className="relative mb-8 md:max-w-md">
-              <Search size={14} className="absolute left-0 top-1/2 -translate-y-1/2 text-white/25" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Cari transaksi"
-                className="w-full bg-transparent border-b border-white/10 pl-6 pr-2 py-2 text-sm outline-none focus:border-lime placeholder:text-white/25 transition-colors"
-              />
-            </div>
+        <div key={activeTab} className="tab-content">
+          {activeTab === "home" && (
+            <>
+              <div className="relative mb-8 md:max-w-md">
+                <Search size={14} className="absolute left-0 top-1/2 -translate-y-1/2 text-white/25" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Cari transaksi"
+                  className="w-full bg-transparent border-b border-white/10 pl-6 pr-2 py-2 text-sm outline-none focus:border-lime placeholder:text-white/25 transition-colors"
+                />
+              </div>
 
-            <div className="md:grid md:grid-cols-2 md:gap-x-14">
-              <div>
-                <div className="flex items-center gap-6 mb-9">
-                  <div className="relative w-28 h-28 shrink-0">
-                    <svg viewBox="0 0 120 120" className="w-28 h-28 -rotate-90">
-                      <circle cx="60" cy="60" r="52" fill="none" stroke="#ffffff0F" strokeWidth="10" />
-                      <circle
-                        cx="60"
-                        cy="60"
-                        r="52"
-                        fill="none"
-                        stroke="#C8FF4D"
-                        strokeWidth="10"
-                        strokeLinecap="round"
-                        strokeDasharray={2 * Math.PI * 52}
-                        strokeDashoffset={2 * Math.PI * 52 * (1 - Math.min(1, remainingMonth / Math.max(1, data.monthlyBudget)))}
-                        style={{ transition: "stroke-dashoffset 0.5s ease" }}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <Sparkles size={13} className="text-lime mb-1" />
-                      <div className="text-[10px] text-white/40 uppercase tracking-wider">Sisa</div>
-                    </div>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="text-[11px] uppercase tracking-wider text-white/35 font-medium">Budget bulanan tersisa</div>
-                      {!isEditingMonthlyBudget ? (
-                        <button onClick={() => { setIsEditingMonthlyBudget(true); setTempMonthlyBudget(formatRupiahInput(data.monthlyBudget)); }} className="text-[10px] text-lime hover:underline flex items-center gap-1">
-                          <Edit2 size={10} /> Ubah
-                        </button>
-                      ) : null}
-                    </div>
-
-                    {!isEditingMonthlyBudget ? (
-                      <div className="font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate">
-                        {rupiah(remainingMonth)}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 mb-2">
-                        <input
-                          autoFocus
-                          type="text"
-                          inputMode="numeric"
-                          value={tempMonthlyBudget}
-                          onChange={(e) => setTempMonthlyBudget(formatRupiahInput(e.target.value))}
-                          className="w-full bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular"
+              <div className="md:grid md:grid-cols-2 md:gap-x-14">
+                <div>
+                  <div className="flex items-center gap-6 mb-9">
+                    <div className="relative w-28 h-28 shrink-0">
+                      <svg viewBox="0 0 120 120" className="w-28 h-28 -rotate-90">
+                        <circle cx="60" cy="60" r="52" fill="none" stroke="#ffffff0F" strokeWidth="10" />
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="52"
+                          fill="none"
+                          stroke="#C8FF4D"
+                          strokeWidth="10"
+                          strokeLinecap="round"
+                          strokeDasharray={2 * Math.PI * 52}
+                          strokeDashoffset={2 * Math.PI * 52 * (1 - Math.min(1, remainingMonth / Math.max(1, data.monthlyBudget)))}
+                          style={{ transition: "stroke-dashoffset 0.5s ease" }}
                         />
-                        <button onClick={() => {
-                          const val = parseRupiahInput(tempMonthlyBudget);
-                          if (val > 0) setData((prev) => ({ ...prev, monthlyBudget: val }));
-                          setIsEditingMonthlyBudget(false);
-                        }} className="text-lime hover:scale-110 bg-lime/10 p-1.5 rounded"><Check size={14} /></button>
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <Sparkles size={13} className="text-lime mb-1" />
+                        <div className="text-[10px] text-white/40 uppercase tracking-wider">Sisa</div>
                       </div>
-                    )}
-
-                    <div className="text-[11px] text-white/40 mb-3">
-                      Total Limit: <span className="text-white font-medium tabular">{rupiah(data.monthlyBudget)}</span>
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="text-[11px] uppercase tracking-wider text-white/35 font-medium">Budget bulanan tersisa</div>
+                        {!isEditingMonthlyBudget ? (
+                          <button onClick={() => { setIsEditingMonthlyBudget(true); setTempMonthlyBudget(formatRupiahInput(data.monthlyBudget)); }} className="text-[10px] text-lime hover:underline flex items-center gap-1">
+                            <Edit2 size={10} /> Ubah
+                          </button>
+                        ) : null}
+                      </div>
 
-                    <div className="flex gap-4">
+                      {!isEditingMonthlyBudget ? (
+                        <div className="font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate">
+                          {rupiah(remainingMonth)}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 mb-2">
+                          <input
+                            autoFocus
+                            type="text"
+                            inputMode="numeric"
+                            value={tempMonthlyBudget}
+                            onChange={(e) => setTempMonthlyBudget(formatRupiahInput(e.target.value))}
+                            className="w-full bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular"
+                          />
+                          <button onClick={() => {
+                            const val = parseRupiahInput(tempMonthlyBudget);
+                            if (val > 0) setData((prev) => ({ ...prev, monthlyBudget: val }));
+                            setIsEditingMonthlyBudget(false);
+                          }} className="text-lime hover:scale-110 bg-lime/10 p-1.5 rounded"><Check size={14} /></button>
+                        </div>
+                      )}
+
+                      <div className="text-[11px] text-white/40 mb-3">
+                        Total Limit: <span className="text-white font-medium tabular">{rupiah(data.monthlyBudget)}</span>
+                      </div>
+
+                      <div className="flex gap-4">
+                        <div>
+                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
+                          <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
+                          <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mb-9 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
+                    <div className="flex items-center justify-between mb-4">
                       <div>
-                        <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
-                        <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
+                        <div className="text-sm font-semibold">Aktivitas Bulan Ini</div>
+                        <div className="text-[11px] text-white/40 uppercase tracking-wider mt-0.5">{MONTHS[calendarDate.getMonth()]} {calendarDate.getFullYear()}</div>
                       </div>
-                      <div>
-                        <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
-                        <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={handlePrevMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronLeft size={15} /></button>
+                        <button onClick={() => setCalendarDate(new Date())} className="text-[10px] text-lime font-medium px-2.5 py-1 rounded-lg bg-lime/10 hover:bg-lime/20 transition">Hari Ini</button>
+                        <button onClick={handleNextMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronRight size={15} /></button>
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                <div className="mb-9 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <div className="text-sm font-semibold">Aktivitas Bulan Ini</div>
-                      <div className="text-[11px] text-white/40 uppercase tracking-wider mt-0.5">{MONTHS[calendarDate.getMonth()]} {calendarDate.getFullYear()}</div>
+                    <div className="grid grid-cols-7 gap-1.5 mb-1.5 text-center text-[10px] text-white/40 font-medium uppercase">
+                      <div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div className="text-coral">Min</div>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={handlePrevMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronLeft size={15} /></button>
-                      <button onClick={() => setCalendarDate(new Date())} className="text-[10px] text-lime font-medium px-2.5 py-1 rounded-lg bg-lime/10 hover:bg-lime/20 transition">Hari Ini</button>
-                      <button onClick={handleNextMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronRight size={15} /></button>
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-7 gap-1.5 mb-1.5 text-center text-[10px] text-white/40 font-medium uppercase">
-                    <div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div className="text-coral">Min</div>
-                  </div>
+                    <div className="grid grid-cols-7 gap-1.5">
+                      {calendarGridData.map((item) => {
+                        if (item.empty) return <div key={item.id} className="h-16 md:h-20 rounded-xl bg-transparent" />;
+                        const isToday = item.iso === todayKey();
+                        const hasExpense = item.expense > 0;
+                        const hasIncome = item.income > 0;
 
-                  <div className="grid grid-cols-7 gap-1.5">
-                    {calendarGridData.map((item) => {
-                      if (item.empty) return <div key={item.id} className="h-16 md:h-20 rounded-xl bg-transparent" />;
-                      const isToday = item.iso === todayKey();
-                      const hasExpense = item.expense > 0;
-                      const hasIncome = item.income > 0;
-
-                      return (
-                        <div key={item.iso} className={`h-16 md:h-20 rounded-xl p-1.5 flex flex-col justify-between transition border ${isToday ? "border-lime bg-white/[0.06]" : item.isHoliday ? "border-white/5 bg-coral/[0.08]" : "border-white/5 bg-white/[0.02]"}`}>
-                          <div className="flex items-center justify-between">
-                            <span className={`text-[11px] font-medium ${isToday ? "text-lime font-bold" : item.isHoliday ? "text-coral font-bold" : "text-white/60"}`}>{item.dateNum}</span>
+                        return (
+                          <div key={item.iso} className={`h-16 md:h-20 rounded-xl p-1.5 flex flex-col justify-between transition border ${isToday ? "border-lime bg-white/[0.06]" : item.isHoliday ? "border-white/5 bg-coral/[0.08]" : "border-white/5 bg-white/[0.02]"}`}>
+                            <div className="flex items-center justify-between">
+                              <span className={`text-[11px] font-medium ${isToday ? "text-lime font-bold" : item.isHoliday ? "text-coral font-bold" : "text-white/60"}`}>{item.dateNum}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5 text-right overflow-hidden">
+                              {hasIncome && <span className="text-[9.5px] text-teal font-medium tabular truncate">+{item.income >= 1000000 ? (item.income / 1000000).toFixed(1) + "JT" : Math.round(item.income / 1000) + "RB"}</span>}
+                              {hasExpense && <span className="text-[9.5px] text-coral font-medium tabular truncate">-{item.expense >= 1000000 ? (item.expense / 1000000).toFixed(1) + "JT" : Math.round(item.expense / 1000) + "RB"}</span>}
+                            </div>
                           </div>
-                          <div className="flex flex-col gap-0.5 text-right overflow-hidden">
-                            {hasIncome && <span className="text-[9.5px] text-teal font-medium tabular truncate">+{item.income >= 1000000 ? (item.income / 1000000).toFixed(1) + "JT" : Math.round(item.income / 1000) + "RB"}</span>}
-                            {hasExpense && <span className="text-[9.5px] text-coral font-medium tabular truncate">-{item.expense >= 1000000 ? (item.expense / 1000000).toFixed(1) + "JT" : Math.round(item.expense / 1000) + "RB"}</span>}
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between mb-3">
+                    <SectionLabel noMargin>Target Tabungan</SectionLabel>
+                    <button onClick={() => setShowAddGoal(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-2.5 py-1 flex items-center gap-1 hover:bg-lime/5 transition"><Plus size={12} /> Tambah Target</button>
+                  </div>
+                  <div className="mb-9 space-y-4">
+                    {(!data.goals || data.goals.length === 0) && <EmptyRow>Belum ada target tabungan.</EmptyRow>}
+                    {data.goals?.map((goal) => {
+                      if (editingGoalId === goal.id) {
+                        return <EditGoalCard key={goal.id} goal={goal} onSave={(updated) => updateGoal(goal.id, updated)} onCancel={() => setEditingGoalId(null)} />;
+                      }
+                      return (
+                        <div key={goal.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
+                          <div className="flex items-center gap-2.5 mb-2">
+                            <PiggyBank size={15} className="text-lime shrink-0" />
+                            <div className="text-sm font-medium truncate flex-1">{goal.name}</div>
+                            <div className="text-[11px] text-white/40 tabular shrink-0">{rupiah(goal.saved)} / {rupiah(goal.target)}</div>
+                            <div className="flex items-center gap-1 ml-2">
+                              <button onClick={() => setTopUpGoal(goal)} className="text-black bg-lime hover:scale-105 p-1 rounded transition mr-1" title="Tambah tabungan"><Plus size={13} strokeWidth={2.5} /></button>
+                              <button onClick={() => setEditingGoalId(goal.id)} className="text-white/30 hover:text-white p-1 transition"><Edit2 size={13} /></button>
+                              <button onClick={() => requestConfirm("Hapus Target?", `Target "${goal.name}" akan dihapus.`, () => deleteGoal(goal.id))} className="text-white/30 hover:text-coral p-1 transition"><Trash2 size={13} /></button>
+                            </div>
+                          </div>
+                          <div className="h-[4px] bg-white/10 overflow-hidden rounded-full">
+                            <div className="h-full bg-lime transition-all rounded-full" style={{ width: `${Math.min(100, (goal.saved / Math.max(1, goal.target)) * 100)}%` }} />
                           </div>
                         </div>
                       );
@@ -1612,722 +1649,690 @@ export default function AgrLedgerApp() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between mb-3">
-                  <SectionLabel noMargin>Target Tabungan</SectionLabel>
-                  <button onClick={() => setShowAddGoal(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-2.5 py-1 flex items-center gap-1 hover:bg-lime/5 transition"><Plus size={12} /> Tambah Target</button>
-                </div>
-                <div className="mb-9 space-y-4">
-                  {(!data.goals || data.goals.length === 0) && <EmptyRow>Belum ada target tabungan.</EmptyRow>}
-                  {data.goals?.map((goal) => {
-                    if (editingGoalId === goal.id) {
-                      return <EditGoalCard key={goal.id} goal={goal} onSave={(updated) => updateGoal(goal.id, updated)} onCancel={() => setEditingGoalId(null)} />;
-                    }
-                    return (
-                      <div key={goal.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
-                        <div className="flex items-center gap-2.5 mb-2">
-                          <PiggyBank size={15} className="text-lime shrink-0" />
-                          <div className="text-sm font-medium truncate flex-1">{goal.name}</div>
-                          <div className="text-[11px] text-white/40 tabular shrink-0">{rupiah(goal.saved)} / {rupiah(goal.target)}</div>
-                          <div className="flex items-center gap-1 ml-2">
-                            <button onClick={() => setTopUpGoal(goal)} className="text-black bg-lime hover:scale-105 p-1 rounded transition mr-1" title="Tambah tabungan"><Plus size={13} strokeWidth={2.5} /></button>
-                            <button onClick={() => setEditingGoalId(goal.id)} className="text-white/30 hover:text-white p-1 transition"><Edit2 size={13} /></button>
-                            <button onClick={() => requestConfirm("Hapus Target?", `Target "${goal.name}" akan dihapus.`, () => deleteGoal(goal.id))} className="text-white/30 hover:text-coral p-1 transition"><Trash2 size={13} /></button>
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <SectionLabel noMargin>Dompet</SectionLabel>
+                    <div className="text-[11px] text-white/35 tabular">{rupiah(totals.balance)} total</div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 mb-9">
+                    {data.wallets.map((w) => {
+                      const isEditing = editingWalletId === w.id;
+                      const isEditingBalance = editingBalanceId === w.id;
+                      const canDeleteWallet = data.wallets.length > 1;
+                      return (
+                        <div key={w.id} className="pl-3 pr-2 py-3 border-l-2 bg-white/[0.03] rounded-r-xl flex flex-col justify-between group" style={{ borderColor: w.color }}>
+                          <div className="flex items-center justify-between mb-2">
+                            {isEditing ? (
+                              <div className="flex items-center gap-1 w-full">
+                                <input autoFocus value={editingWalletName} onChange={(e) => setEditingWalletName(e.target.value)} className="w-full bg-white/10 text-xs px-1.5 py-0.5 rounded outline-none text-white" />
+                                <button onClick={() => updateWalletName(w.id, editingWalletName)} className="text-lime hover:scale-110"><Check size={13} /></button>
+                              </div>
+                            ) : (
+                              <div onClick={() => { setEditingWalletId(w.id); setEditingWalletName(w.name); }} className="text-[11px] text-white/60 hover:text-white truncate cursor-pointer flex items-center gap-1 group/name">
+                                <span className="truncate">{w.name}</span>
+                                <Edit2 size={10} className="opacity-0 group-hover/name:opacity-100 transition shrink-0" />
+                              </div>
+                            )}
+                            {canDeleteWallet && (
+                              <button onClick={() => requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.`, () => deleteWallet(w.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"><Trash2 size={11} /></button>
+                            )}
                           </div>
-                        </div>
-                        <div className="h-[4px] bg-white/10 overflow-hidden rounded-full">
-                          <div className="h-full bg-lime transition-all rounded-full" style={{ width: `${Math.min(100, (goal.saved / Math.max(1, goal.target)) * 100)}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <SectionLabel noMargin>Dompet</SectionLabel>
-                  <div className="text-[11px] text-white/35 tabular">{rupiah(totals.balance)} total</div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 mb-9">
-                  {data.wallets.map((w) => {
-                    const isEditing = editingWalletId === w.id;
-                    const isEditingBalance = editingBalanceId === w.id;
-                    const canDeleteWallet = data.wallets.length > 1;
-                    return (
-                      <div key={w.id} className="pl-3 pr-2 py-3 border-l-2 bg-white/[0.03] rounded-r-xl flex flex-col justify-between group" style={{ borderColor: w.color }}>
-                        <div className="flex items-center justify-between mb-2">
-                          {isEditing ? (
-                            <div className="flex items-center gap-1 w-full">
-                              <input autoFocus value={editingWalletName} onChange={(e) => setEditingWalletName(e.target.value)} className="w-full bg-white/10 text-xs px-1.5 py-0.5 rounded outline-none text-white" />
-                              <button onClick={() => updateWalletName(w.id, editingWalletName)} className="text-lime hover:scale-110"><Check size={13} /></button>
+                          {isEditingBalance ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                autoFocus
+                                type="text"
+                                inputMode="numeric"
+                                value={editingBalanceValue}
+                                onChange={(e) => setEditingBalanceValue(formatRupiahInput(e.target.value))}
+                                className="w-full bg-white/10 text-sm px-1.5 py-0.5 rounded outline-none tabular text-lime font-medium"
+                              />
+                              <button onClick={() => { adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue)); setEditingBalanceId(null); }} className="text-lime hover:scale-110"><Check size={13} /></button>
                             </div>
                           ) : (
-                            <div onClick={() => { setEditingWalletId(w.id); setEditingWalletName(w.name); }} className="text-[11px] text-white/60 hover:text-white truncate cursor-pointer flex items-center gap-1 group/name">
-                              <span className="truncate">{w.name}</span>
-                              <Edit2 size={10} className="opacity-0 group-hover/name:opacity-100 transition shrink-0" />
+                            <div onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }} className="font-medium text-sm tabular cursor-pointer hover:text-lime transition" title="Klik untuk ubah saldo">
+                              {rupiah(w.balance)}
                             </div>
                           )}
-                          {canDeleteWallet && (
-                            <button onClick={() => requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.`, () => deleteWallet(w.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"><Trash2 size={11} /></button>
-                          )}
                         </div>
-                        {isEditingBalance ? (
-                          <div className="flex items-center gap-1">
-                            <input
-                              autoFocus
-                              type="text"
-                              inputMode="numeric"
-                              value={editingBalanceValue}
-                              onChange={(e) => setEditingBalanceValue(formatRupiahInput(e.target.value))}
-                              className="w-full bg-white/10 text-sm px-1.5 py-0.5 rounded outline-none tabular text-lime font-medium"
-                            />
-                            <button onClick={() => { adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue)); setEditingBalanceId(null); }} className="text-lime hover:scale-110"><Check size={13} /></button>
+                      );
+                    })}
+                    <button onClick={() => setShowAddWallet(true)} className="min-h-[72px] flex flex-col items-center justify-center gap-1 text-white/30 hover:text-white/60 transition border-2 border-dashed border-white/15 rounded-xl">
+                      <Plus size={15} />
+                      <span className="text-[10px]">Dompet Baru</span>
+                    </button>
+                  </div>
+
+                  <SectionLabel>Pengeluaran per kategori</SectionLabel>
+                  <div className="mb-9">
+                    {categorySpend.filter((c) => c.total > 0).length === 0 && <EmptyRow>Belum ada pengeluaran tercatat.</EmptyRow>}
+                    {categorySpend.filter((c) => c.total > 0).map((c) => (
+                      <button key={c.id} onClick={() => setFilterCat((prev) => (prev === c.id ? "all" : c.id))} className={`w-full text-left py-2.5 border-b border-white/5 transition ${filterCat === c.id ? "opacity-100" : "opacity-90 hover:opacity-100"}`}>
+                        <div className="flex items-center justify-between text-sm mb-1.5">
+                          <span className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] shrink-0" style={{ backgroundColor: c.color + "26" }}>{c.emoji}</span>
+                            <span style={filterCat === c.id ? { color: c.color } : undefined}>{c.label}</span>
+                          </span>
+                          <span className="font-medium tabular text-sm">{rupiah(c.total)}</span>
+                        </div>
+                        <div className="h-[3px] bg-white/8 overflow-hidden rounded-full">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${(c.total / maxCat) * 100}%`, backgroundColor: c.color, opacity: filterCat === "all" || filterCat === c.id ? 1 : 0.35 }} />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-3">
+                      <SectionLabel noMargin>{filterCat === "all" ? "Transaksi terbaru" : "Difilter"}</SectionLabel>
+                      {filterCat !== "all" && <button onClick={() => setFilterCat("all")} className="text-[11px] text-lime font-medium">Hapus filter</button>}
+                    </div>
+                    <button onClick={() => setTxEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition ${txEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
+                      <Edit2 size={12} /> {txEditListMode ? "Selesai Edit" : "Edit List"}
+                    </button>
+                  </div>
+                  <div>
+                    {filteredTransactions.length === 0 && <EmptyRow>Belum ada transaksi.</EmptyRow>}
+                    {filteredTransactions.slice(0, 20).map((t) => {
+                      const cat = CATEGORIES.find((c) => c.id === t.category);
+                      const isTransfer = t.type === "transfer";
+                      const fromW = data.wallets.find((w) => w.id === t.fromWalletId)?.name || "Dompet";
+                      const toW = data.wallets.find((w) => w.id === t.toWalletId)?.name || "Dompet";
+
+                      return (
+                        <div key={t.id} className="group flex items-center justify-between py-3 border-b border-white/5">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="text-base shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: isTransfer ? "#ffffff11" : t.type === "income" ? "#5EEAD733" : (cat?.color ? cat.color + "26" : "#ffffff11") }}>
+                              {isTransfer ? <ArrowRightLeft size={14} className="text-white/70" /> : t.type === "income" ? "💰" : (cat?.emoji || "✨")}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium truncate">{t.note || (isTransfer ? "Transfer Saldo" : t.type === "income" ? "Pemasukan" : cat?.label)}</div>
+                              <div className="text-[11px] text-white/35 truncate">{formatDateID(t.date)} • {isTransfer ? `${fromW} ➔ ${toW}` : t.type === "income" ? "Pemasukan" : cat?.label}</div>
+                            </div>
                           </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className={`font-medium text-sm tabular ${isTransfer ? "text-white/60" : t.type === "income" ? "text-teal" : "text-white"}`}>
+                              {isTransfer ? "" : t.type === "income" ? "+" : "-"}{rupiah(t.amount)}
+                            </div>
+                            {txEditListMode && (
+                              <div className="flex items-center gap-1.5 ml-2">
+                                <button onClick={() => setEditingTx(t)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={13} /></button>
+                                <button onClick={() => requestConfirm("Hapus Transaksi?", "Transaksi akan dihapus permanen.", () => deleteTransaction(t.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={13} /></button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {activeTab === "budget" && (
+            <div>
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <SectionLabel noMargin>Tahun Anggaran</SectionLabel>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={addBudgetYear} className="px-3 py-1.5 rounded-lg text-[11px] border border-dashed border-white/30 text-lime hover:bg-lime/10 flex items-center gap-1 font-medium"><Plus size={12} /> Tahun Baru</button>
+                    {budgetYearsList.length > 1 && (
+                      <>
+                        {!isDeleteMode ? (
+                          <button onClick={() => { setIsDeleteMode(true); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] border border-white/20 text-white bg-white/[0.06] flex items-center gap-1.5 font-medium"><Trash2 size={12} /> Hapus Tahun</button>
                         ) : (
-                          <div onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }} className="font-medium text-sm tabular cursor-pointer hover:text-lime transition" title="Klik untuk ubah saldo">
-                            {rupiah(w.balance)}
+                          <div className="flex items-center gap-1.5">
+                            <button disabled={selectedYearsToDelete.length === 0} onClick={() => requestConfirm("Hapus Tahun?", "Tahun terpilih akan dihapus.", executeDeleteSelectedYears)} className="px-3 py-1.5 rounded-lg text-[11px] bg-coral text-black font-bold disabled:opacity-40">Hapus ({selectedYearsToDelete.length})</button>
+                            <button onClick={() => { setIsDeleteMode(false); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] bg-white/20 text-white font-medium">Batal</button>
                           </div>
                         )}
-                      </div>
-                    );
-                  })}
-                  <button onClick={() => setShowAddWallet(true)} className="min-h-[72px] flex flex-col items-center justify-center gap-1 text-white/30 hover:text-white/60 transition border-2 border-dashed border-white/15 rounded-xl">
-                    <Plus size={15} />
-                    <span className="text-[10px]">Dompet Baru</span>
-                  </button>
-                </div>
-
-                <SectionLabel>Pengeluaran per kategori</SectionLabel>
-                <div className="mb-9">
-                  {categorySpend.filter((c) => c.total > 0).length === 0 && <EmptyRow>Belum ada pengeluaran tercatat.</EmptyRow>}
-                  {categorySpend.filter((c) => c.total > 0).map((c) => (
-                    <button key={c.id} onClick={() => setFilterCat((prev) => (prev === c.id ? "all" : c.id))} className={`w-full text-left py-2.5 border-b border-white/5 transition ${filterCat === c.id ? "opacity-100" : "opacity-90 hover:opacity-100"}`}>
-                      <div className="flex items-center justify-between text-sm mb-1.5">
-                        <span className="flex items-center gap-2">
-                          <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] shrink-0" style={{ backgroundColor: c.color + "26" }}>{c.emoji}</span>
-                          <span style={filterCat === c.id ? { color: c.color } : undefined}>{c.label}</span>
-                        </span>
-                        <span className="font-medium tabular text-sm">{rupiah(c.total)}</span>
-                      </div>
-                      <div className="h-[3px] bg-white/8 overflow-hidden rounded-full">
-                        <div className="h-full rounded-full transition-all" style={{ width: `${(c.total / maxCat) * 100}%`, backgroundColor: c.color, opacity: filterCat === "all" || filterCat === c.id ? 1 : 0.35 }} />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-3">
-                    <SectionLabel noMargin>{filterCat === "all" ? "Transaksi terbaru" : "Difilter"}</SectionLabel>
-                    {filterCat !== "all" && <button onClick={() => setFilterCat("all")} className="text-[11px] text-lime font-medium">Hapus filter</button>}
+                      </>
+                    )}
                   </div>
-                  <button onClick={() => setTxEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition ${txEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
-                    <Edit2 size={12} /> {txEditListMode ? "Selesai Edit" : "Edit List"}
-                  </button>
                 </div>
-                <div>
-                  {filteredTransactions.length === 0 && <EmptyRow>Belum ada transaksi.</EmptyRow>}
-                  {filteredTransactions.slice(0, 20).map((t) => {
-                    const cat = CATEGORIES.find((c) => c.id === t.category);
-                    const isTransfer = t.type === "transfer";
-                    const fromW = data.wallets.find((w) => w.id === t.fromWalletId)?.name || "Dompet";
-                    const toW = data.wallets.find((w) => w.id === t.toWalletId)?.name || "Dompet";
-
+                
+                <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
+                  {budgetYearsList.map((y) => {
+                    const isSelected = String(data.activeYear) === String(y);
+                    const isMarkedForDelete = selectedYearsToDelete.includes(y);
                     return (
-                      <div key={t.id} className="group flex items-center justify-between py-3 border-b border-white/5">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="text-base shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: isTransfer ? "#ffffff11" : t.type === "income" ? "#5EEAD733" : (cat?.color ? cat.color + "26" : "#ffffff11") }}>
-                            {isTransfer ? <ArrowRightLeft size={14} className="text-white/70" /> : t.type === "income" ? "💰" : (cat?.emoji || "✨")}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{t.note || (isTransfer ? "Transfer Saldo" : t.type === "income" ? "Pemasukan" : cat?.label)}</div>
-                            <div className="text-[11px] text-white/35 truncate">{formatDateID(t.date)} • {isTransfer ? `${fromW} ➔ ${toW}` : t.type === "income" ? "Pemasukan" : cat?.label}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div className={`font-medium text-sm tabular ${isTransfer ? "text-white/60" : t.type === "income" ? "text-teal" : "text-white"}`}>
-                            {isTransfer ? "" : t.type === "income" ? "+" : "-"}{rupiah(t.amount)}
-                          </div>
-                          {txEditListMode && (
-                            <div className="flex items-center gap-1.5 ml-2">
-                              <button onClick={() => setEditingTx(t)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={13} /></button>
-                              <button onClick={() => requestConfirm("Hapus Transaksi?", "Transaksi akan dihapus permanen.", () => deleteTransaction(t.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={13} /></button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      <button key={y} onClick={() => { if (isDeleteMode) { setSelectedYearsToDelete(prev => isMarkedForDelete ? prev.filter(item => item !== y) : [...prev, y]); } else { setData((prev) => ({ ...prev, activeYear: y })); } }} className={`py-2 rounded-lg text-[11px] font-medium border transition flex items-center justify-center gap-1.5 ${isDeleteMode && isMarkedForDelete ? "bg-coral text-black border-coral font-bold" : isDeleteMode ? "bg-white/10 border-white/25 text-white" : isSelected ? "bg-lime text-black border-lime font-bold" : "border-white/10 text-white/70 bg-white/[0.03]"}`}>
+                        {y}
+                        {isDeleteMode && <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] ${isMarkedForDelete ? "bg-black text-coral font-bold" : "bg-white/20 text-white"}`}>{isMarkedForDelete ? "✓" : "+"}</span>}
+                      </button>
                     );
                   })}
                 </div>
               </div>
-            </div>
-          </>
-        )}
 
-        {activeTab === "budget" && (
-          <div>
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <SectionLabel noMargin>Tahun Anggaran</SectionLabel>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button onClick={addBudgetYear} className="px-3 py-1.5 rounded-lg text-[11px] border border-dashed border-white/30 text-lime hover:bg-lime/10 flex items-center gap-1 font-medium"><Plus size={12} /> Tahun Baru</button>
-                  {budgetYearsList.length > 1 && (
-                    <>
-                      {!isDeleteMode ? (
-                        <button onClick={() => { setIsDeleteMode(true); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] border border-white/20 text-white bg-white/[0.06] flex items-center gap-1.5 font-medium"><Trash2 size={12} /> Hapus Tahun</button>
-                      ) : (
-                        <div className="flex items-center gap-1.5">
-                          <button disabled={selectedYearsToDelete.length === 0} onClick={() => requestConfirm("Hapus Tahun?", "Tahun terpilih akan dihapus.", executeDeleteSelectedYears)} className="px-3 py-1.5 rounded-lg text-[11px] bg-coral text-black font-bold disabled:opacity-40">Hapus ({selectedYearsToDelete.length})</button>
-                          <button onClick={() => { setIsDeleteMode(false); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] bg-white/20 text-white font-medium">Batal</button>
-                        </div>
-                      )}
-                    </>
-                  )}
+              <div className="mb-8 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
+                <div className="text-sm font-semibold mb-1">Tren Saldo Akhir</div>
+                <div className="text-[11px] text-white/40 mb-4">Tahun {data.activeYear}</div>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={budgetTrendData} margin={{ top: 5, right: 8, left: 12, bottom: 0 }}>
+                      <CartesianGrid stroke="#ffffff0d" vertical={false} />
+                      <XAxis dataKey="month" stroke="#ffffff35" fontSize={10} tickLine={false} axisLine={false} interval={0} />
+                      <YAxis hide domain={["auto", "auto"]} />
+                      <Tooltip cursor={{ stroke: "#ffffff20" }} contentStyle={{ background: "#1A1B1E", border: "1px solid #ffffff1a", borderRadius: 8, fontSize: 12 }} labelStyle={{ color: "#ffffff90" }} formatter={(v) => [rupiah(v), "Saldo Akhir"]} />
+                      <Line type="monotone" dataKey="saldo" stroke="#C8FF4D" strokeWidth={2} dot={{ r: 3, fill: "#C8FF4D", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
-              
-              <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
-                {budgetYearsList.map((y) => {
-                  const isSelected = String(data.activeYear) === String(y);
-                  const isMarkedForDelete = selectedYearsToDelete.includes(y);
-                  return (
-                    <button key={y} onClick={() => { if (isDeleteMode) { setSelectedYearsToDelete(prev => isMarkedForDelete ? prev.filter(item => item !== y) : [...prev, y]); } else { setData((prev) => ({ ...prev, activeYear: y })); } }} className={`py-2 rounded-lg text-[11px] font-medium border transition flex items-center justify-center gap-1.5 ${isDeleteMode && isMarkedForDelete ? "bg-coral text-black border-coral font-bold" : isDeleteMode ? "bg-white/10 border-white/25 text-white" : isSelected ? "bg-lime text-black border-lime font-bold" : "border-white/10 text-white/70 bg-white/[0.03]"}`}>
-                      {y}
-                      {isDeleteMode && <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] ${isMarkedForDelete ? "bg-black text-coral font-bold" : "bg-white/20 text-white"}`}>{isMarkedForDelete ? "✓" : "+"}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
 
-            <div className="mb-8 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
-              <div className="text-sm font-semibold mb-1">Tren Saldo Akhir</div>
-              <div className="text-[11px] text-white/40 mb-4">Tahun {data.activeYear}</div>
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={budgetTrendData} margin={{ top: 5, right: 8, left: 12, bottom: 0 }}>
-                    <CartesianGrid stroke="#ffffff0d" vertical={false} />
-                    <XAxis dataKey="month" stroke="#ffffff35" fontSize={10} tickLine={false} axisLine={false} interval={0} />
-                    <YAxis hide domain={["auto", "auto"]} />
-                    <Tooltip cursor={{ stroke: "#ffffff20" }} contentStyle={{ background: "#1A1B1E", border: "1px solid #ffffff1a", borderRadius: 8, fontSize: 12 }} labelStyle={{ color: "#ffffff90" }} formatter={(v) => [rupiah(v), "Saldo Akhir"]} />
-                    <Line type="monotone" dataKey="saldo" stroke="#C8FF4D" strokeWidth={2} dot={{ r: 3, fill: "#C8FF4D", strokeWidth: 0 }} activeDot={{ r: 5 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+              <div className="overflow-x-auto no-scrollbar swipe-ignore -mx-5 px-5 md:mx-0 md:px-0 mb-10">
+                <table className="w-full text-xs min-w-[780px]">
+                  <thead>
+                    <tr className="text-white/40 text-left border-b border-white/10">
+                      <th className="py-2 pr-3 font-normal">Bulan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Saldo Awal</th>
+                      <th className="py-2 pr-3 font-normal text-right">Gaji</th>
+                      <th className="py-2 pr-3 font-normal text-right">Gaji Tambahan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Rutin</th>
+                      <th className="py-2 pr-3 font-normal text-right">Cicilan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Pengeluaran</th>
+                      <th className="py-2 pr-3 font-normal">Keterangan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Saldo Akhir</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resolvedMonthsData && MONTHS.map((m, index) => {
+                      const row = resolvedMonthsData[m];
+                      const isFirstMonth = index === 0;
+                      const currentYearStr = String(data.activeYear);
+                      const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
+                      const isFirstYear = sortedYears[0] === Number(currentYearStr);
 
-            <div className="overflow-x-auto no-scrollbar -mx-5 px-5 md:mx-0 md:px-0 mb-10">
-              <table className="w-full text-xs min-w-[780px]">
-                <thead>
-                  <tr className="text-white/40 text-left border-b border-white/10">
-                    <th className="py-2 pr-3 font-normal">Bulan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Saldo Awal</th>
-                    <th className="py-2 pr-3 font-normal text-right">Gaji</th>
-                    <th className="py-2 pr-3 font-normal text-right">Gaji Tambahan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Rutin</th>
-                    <th className="py-2 pr-3 font-normal text-right">Cicilan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Pengeluaran</th>
-                    <th className="py-2 pr-3 font-normal">Keterangan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Saldo Akhir</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resolvedMonthsData && MONTHS.map((m, index) => {
-                    const row = resolvedMonthsData[m];
-                    const isFirstMonth = index === 0;
-                    const currentYearStr = String(data.activeYear);
-                    const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
-                    const isFirstYear = sortedYears[0] === Number(currentYearStr);
+                      return (
+                        <tr key={m} className="border-b border-white/5">
+                          <td className="py-1.5 pr-3 whitespace-nowrap text-white/70">{m}</td>
+                          <td className="py-1.5 pr-3 text-right tabular text-white/70">
+                            {isFirstMonth && isFirstYear ? (
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={(data.budgetYears[currentYearStr].months[m].saldoAwal || 0) === 0 ? "" : (data.budgetYears[currentYearStr].months[m].saldoAwal || 0).toLocaleString("id-ID")}
+                                onChange={(e) => updateBudgetCell(data.activeYear, m, "saldoAwal", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
+                                placeholder="0"
+                                className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
+                              />
+                            ) : (
+                              <span className="py-0.5 block">{row.resolvedSaldoAwal.toLocaleString("id-ID")}</span>
+                            )}
+                          </td>
 
-                    return (
-                      <tr key={m} className="border-b border-white/5">
-                        <td className="py-1.5 pr-3 whitespace-nowrap text-white/70">{m}</td>
-                        <td className="py-1.5 pr-3 text-right tabular text-white/70">
-                          {isFirstMonth && isFirstYear ? (
+                          {/* Gaji Pokok */}
+                          <td className="py-1.5 pr-3">
                             <input
                               type="text"
                               inputMode="numeric"
-                              value={(data.budgetYears[currentYearStr].months[m].saldoAwal || 0) === 0 ? "" : (data.budgetYears[currentYearStr].months[m].saldoAwal || 0).toLocaleString("id-ID")}
-                              onChange={(e) => updateBudgetCell(data.activeYear, m, "saldoAwal", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
+                              value={(row.gaji || 0) === 0 ? "" : (row.gaji || 0).toLocaleString("id-ID")}
+                              onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
                               placeholder="0"
                               className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
                             />
-                          ) : (
-                            <span className="py-0.5 block">{row.resolvedSaldoAwal.toLocaleString("id-ID")}</span>
-                          )}
-                        </td>
+                          </td>
 
-                        {/* Gaji Pokok */}
-                        <td className="py-1.5 pr-3">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={(row.gaji || 0) === 0 ? "" : (row.gaji || 0).toLocaleString("id-ID")}
-                            onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
-                            placeholder="0"
-                            className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
-                          />
-                        </td>
+                          {/* Gaji Tambahan */}
+                          <td className="py-1.5 pr-3 text-right tabular text-teal">
+                            {row.gajiTambahan > 0 ? (
+                              <span 
+                                className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
+                                onClick={(e) => handleTogglePopup(e, m, gajiTambahanByMonth[`${data.activeYear}-${index}`] || [], "Gaji Tambahan")}
+                              >
+                                {row.gajiTambahan.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span>0</span>
+                            )}
+                          </td>
 
-                        {/* Gaji Tambahan */}
-                        <td className="py-1.5 pr-3 text-right tabular text-teal">
-                          {row.gajiTambahan > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, gajiTambahanByMonth[`${data.activeYear}-${index}`] || [], "Gaji Tambahan")}
-                            >
-                              {row.gajiTambahan.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
+                          {/* Rutin */}
+                          <td className="py-1.5 pr-3 text-right tabular text-white/80">
+                            {row.rutin > 0 ? (
+                              <span 
+                                className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
+                                onClick={(e) => handleTogglePopup(e, m, routineByMonth[`${data.activeYear}-${index}`] || [], "Rutin")}
+                              >
+                                {row.rutin.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span>0</span>
+                            )}
+                          </td>
 
-                        {/* Rutin */}
-                        <td className="py-1.5 pr-3 text-right tabular text-white/80">
-                          {row.rutin > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, routineByMonth[`${data.activeYear}-${index}`] || [], "Rutin")}
-                            >
-                              {row.rutin.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
+                          {/* Cicilan */}
+                          <td className="py-1.5 pr-3 text-right tabular text-white/80">
+                            {row.cicilan > 0 ? (
+                              <span 
+                                className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
+                                onClick={(e) => handleTogglePopup(e, m, spaylaterByMonth[`${data.activeYear}-${index}`] || [], "Cicilan")}
+                              >
+                                {row.cicilan.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span>0</span>
+                            )}
+                          </td>
 
-                        {/* Cicilan */}
-                        <td className="py-1.5 pr-3 text-right tabular text-white/80">
-                          {row.cicilan > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, spaylaterByMonth[`${data.activeYear}-${index}`] || [], "Cicilan")}
-                            >
-                              {row.cicilan.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
+                          {/* Pengeluaran */}
+                          <td className="py-1.5 pr-3 text-right tabular text-coral">
+                            {row.pengeluaran > 0 ? (
+                              <span 
+                                className="cursor-pointer border-b border-dotted border-coral/50 inline-block py-0.5"
+                                onClick={(e) => handleTogglePopup(e, m, pengeluaranByMonth[`${data.activeYear}-${index}`] || [], "Pengeluaran")}
+                              >
+                                {row.pengeluaran.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span>0</span>
+                            )}
+                          </td>
 
-                        {/* Pengeluaran */}
-                        <td className="py-1.5 pr-3 text-right tabular text-coral">
-                          {row.pengeluaran > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-coral/50 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, pengeluaranByMonth[`${data.activeYear}-${index}`] || [], "Pengeluaran")}
-                            >
-                              {row.pengeluaran.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
-
-                        <td className="py-1.5 pr-3">
-                          <input value={row.keterangan || ""} onChange={(e) => updateBudgetCell(data.activeYear, m, "keterangan", e.target.value)} placeholder="-" className="w-28 bg-transparent outline-none border-b border-transparent focus:border-lime py-0.5" />
-                        </td>
-                        <td className={`py-1.5 pr-3 text-right tabular font-medium ${row.resolvedSaldoAkhir < 0 ? "text-coral" : "text-lime"}`}>
-                          {rupiah(row.resolvedSaldoAkhir)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* List Pengeluaran Rutin */}
-            <div className="pt-8 border-t border-white/10 mb-10">
-              <div className="flex items-center justify-between mb-6">
-                <div 
-                  className="flex items-center gap-2 cursor-pointer group hover:bg-white/5 px-2 py-1 -ml-2 rounded-lg transition"
-                  onClick={() => setIsRoutineCollapsed(!isRoutineCollapsed)}
-                >
-                  <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
-                  {isRoutineCollapsed ? (
-                    <ChevronDown size={14} className="text-white/40 group-hover:text-white transition" />
-                  ) : (
-                    <ChevronUp size={14} className="text-white/40 group-hover:text-white transition" />
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setRoutineEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-2 flex items-center gap-1.5 transition ${routineEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
-                    <Edit2 size={13} /> {routineEditListMode ? "Selesai" : "Edit List"}
-                  </button>
-                  <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah</button>
-                </div>
+                          <td className="py-1.5 pr-3">
+                            <input value={row.keterangan || ""} onChange={(e) => updateBudgetCell(data.activeYear, m, "keterangan", e.target.value)} placeholder="-" className="w-28 bg-transparent outline-none border-b border-transparent focus:border-lime py-0.5" />
+                          </td>
+                          <td className={`py-1.5 pr-3 text-right tabular font-medium ${row.resolvedSaldoAkhir < 0 ? "text-coral" : "text-lime"}`}>
+                            {rupiah(row.resolvedSaldoAkhir)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
 
-              {!isRoutineCollapsed && (
-                <>
-                  {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
-                  <div className="space-y-3">
-                    {currentYearRoutineEntries.map((e) => {
-                      const startIdx = e.startIndex !== undefined ? Number(e.startIndex) : 0;
-                      const stopIdx = e.stopIndex !== undefined ? Number(e.stopIndex) : 11;
-                      const statusText = stopIdx === 11 ? `Mulai ${MONTHS[startIdx]} (Aktif)` : `Aktif (${MONTHS[startIdx]} s.d ${MONTHS[stopIdx]})`;
+              {/* List Pengeluaran Rutin */}
+              <div className="pt-8 border-t border-white/10 mb-10">
+                <div className="flex items-center justify-between mb-6">
+                  <div 
+                    className="flex items-center gap-2 cursor-pointer group hover:bg-white/5 px-2 py-1 -ml-2 rounded-lg transition"
+                    onClick={() => setIsRoutineCollapsed(!isRoutineCollapsed)}
+                  >
+                    <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
+                    {isRoutineCollapsed ? (
+                      <ChevronDown size={14} className="text-white/40 group-hover:text-white transition" />
+                    ) : (
+                      <ChevronUp size={14} className="text-white/40 group-hover:text-white transition" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setRoutineEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-2 flex items-center gap-1.5 transition ${routineEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
+                      <Edit2 size={13} /> {routineEditListMode ? "Selesai" : "Edit List"}
+                    </button>
+                    <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah</button>
+                  </div>
+                </div>
 
-                      return (
-                        <div key={e.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="font-semibold text-sm mb-1 truncate">{e.name}</div>
-                            <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
-                            <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
+                {!isRoutineCollapsed && (
+                  <>
+                    {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
+                    <div className="space-y-3">
+                      {currentYearRoutineEntries.map((e) => {
+                        const startIdx = e.startIndex !== undefined ? Number(e.startIndex) : 0;
+                        const stopIdx = e.stopIndex !== undefined ? Number(e.stopIndex) : 11;
+                        const statusText = stopIdx === 11 ? `Mulai ${MONTHS[startIdx]} (Aktif)` : `Aktif (${MONTHS[startIdx]} s.d ${MONTHS[stopIdx]})`;
+
+                        return (
+                          <div key={e.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-semibold text-sm mb-1 truncate">{e.name}</div>
+                              <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
+                              <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
+                            </div>
+                            {routineEditListMode && (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400 hover:text-yellow-300 px-2.5 py-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs font-medium transition" title="Stop">Stop</button>
+                                <button onClick={() => setEditingRoutine(e)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={14} /></button>
+                                <button onClick={() => requestConfirm("Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={14} /></button>
+                              </div>
+                            )}
                           </div>
-                          {routineEditListMode && (
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400 hover:text-yellow-300 px-2.5 py-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs font-medium transition" title="Stop">Stop</button>
-                              <button onClick={() => setEditingRoutine(e)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={14} /></button>
-                              <button onClick={() => requestConfirm("Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={14} /></button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="pt-8 border-t border-white/10">
+                <div className="flex items-center justify-between mb-4">
+                  <SectionLabel noMargin>Tracker Cicilan SPayLater</SectionLabel>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setShowSpaylaterHistory(true)} className="text-xs text-white/70 border border-white/20 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-white/5 transition"><History size={13} /> Riwayat</button>
+                    <button onClick={() => setShowAddSpaylater(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat</button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col md:flex-row gap-2.5 mb-6">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25" />
+                    <input
+                      value={spaySearch}
+                      onChange={(e) => setSpaySearch(e.target.value)}
+                      placeholder="Cari nama cicilan..."
+                      className="w-full bg-white/[0.04] border border-white/10 rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:border-lime placeholder:text-white/25 transition-colors text-white"
+                    />
+                  </div>
+                  <div className="relative shrink-0 w-full md:w-auto">
+                    <select
+                      value={spaySort}
+                      onChange={(e) => setSpaySort(e.target.value)}
+                      className="w-full md:w-auto pl-9 pr-8 py-2.5 bg-white/[0.04] border border-white/10 rounded-lg text-xs outline-none focus:border-lime text-white appearance-none cursor-pointer"
+                    >
+                      <option value="default" className="bg-surface">Urutan Default</option>
+                      <option value="name_asc" className="bg-surface">Nama (A - Z)</option>
+                      <option value="name_desc" className="bg-surface">Nama (Z - A)</option>
+                      <option value="price_desc" className="bg-surface">Harga Tertinggi</option>
+                      <option value="price_asc" className="bg-surface">Harga Terendah</option>
+                      <option value="tenor_desc" className="bg-surface">Tenor Terlama</option>
+                      <option value="tenor_asc" className="bg-surface">Tenor Tersingkat</option>
+                    </select>
+                    <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+                  </div>
+                </div>
+
+                {activeSpaylaterList.length === 0 && <EmptyRow>Belum ada tagihan SPayLater aktif / ditemukan.</EmptyRow>}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activeSpaylaterList.map((item) => {
+                    const monthlyPayment = item.totalAmount / item.tenor;
+                    const paidMonthsCount = item.paidChecklist.filter(Boolean).length;
+                    const remainingMonths = item.tenor - paidMonthsCount;
+
+                    return (
+                      <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-5 transition hover:bg-white/[0.05]">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <div className="font-semibold text-sm mb-1">{item.name}</div>
+                            <div className="text-[11px] text-white/40 tabular">Total: {rupiah(item.totalAmount)}</div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => toggleSpaylaterFinished(item.id)} className="text-[10px] px-2.5 py-1 rounded-lg border bg-lime/10 border-lime/30 text-lime hover:bg-lime/20 font-medium">Finish</button>
+                            <button onClick={() => requestConfirm("Hapus Cicilan?", "Cicilan akan dihapus dari daftar.", () => deleteSpaylater(item.id))} className="text-white/20 hover:text-coral p-1"><Trash2 size={15} /></button>
+                          </div>
+                        </div>
+                        <div className="flex justify-between items-end mb-5 border-b border-white/5 pb-4">
+                          <div>
+                            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Per Bulan</div>
+                            <div className="font-medium text-lime text-base tabular">{rupiah(monthlyPayment)}</div>
+                          </div>
+                          <div className="text-right text-[11px] text-white/50">{remainingMonths} bulan lagi</div>
+                        </div>
+                        <div className="text-[11px] text-white/40 mb-2">Checklist Pembayaran:</div>
+                        <div className="flex flex-wrap gap-2">
+                          {item.paidChecklist.map((isPaid, idx) => (
+                            <button key={idx} onClick={() => toggleSpaylaterPaid(item.id, idx)} className={`w-9 h-9 rounded-md flex items-center justify-center text-xs font-medium transition ${isPaid ? "bg-lime text-black font-bold" : "bg-white/5 border border-white/10 text-white/40 hover:border-lime/50"}`}>
+                              {idx + 1}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "tasks" && (
+            <div>
+              <div className="flex items-center gap-4 mb-6">
+                <div>
+                  <SectionLabel noMargin>Total Tugas</SectionLabel>
+                  <div className="font-semibold text-lg tabular mt-1">{taskStats.total}</div>
+                </div>
+                <div>
+                  <SectionLabel noMargin>Selesai</SectionLabel>
+                  <div className="font-semibold text-lg tabular mt-1 text-teal">{taskStats.done}</div>
+                </div>
+                {taskStats.overdue > 0 && (
+                  <div>
+                    <SectionLabel noMargin>Terlambat</SectionLabel>
+                    <div className="font-semibold text-lg tabular mt-1 text-coral flex items-center gap-1">
+                      <AlertCircle size={15} /> {taskStats.overdue}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex bg-white/[0.04] p-1 rounded-lg">
+                  <button onClick={() => setTaskFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Aktif</button>
+                  <button onClick={() => setTaskFilter('done')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'done' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Selesai</button>
+                  <button onClick={() => setTaskFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
+                </div>
+                <button onClick={() => setShowAddTask(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tugas Baru</button>
+              </div>
+
+              {sortedFilteredTasks.length === 0 && <EmptyRow>Tidak ada tugas di sini.</EmptyRow>}
+
+              <div className="space-y-3">
+                {sortedFilteredTasks.map((t) => {
+                  const prio = PRIORITIES.find((p) => p.id === t.priority) || PRIORITIES[1];
+                  const isExpanded = expandedTaskId === t.id;
+                  const subDone = Array.isArray(t.subtasks) ? t.subtasks.filter((s) => s.done).length : 0;
+                  const subTotal = Array.isArray(t.subtasks) ? t.subtasks.length : 0;
+                  const isOverdue = !t.done && t.dueDate && t.dueDate < todayKey();
+
+                  return (
+                    <div key={t.id} className={`bg-white/[0.03] border rounded-xl p-4 transition ${t.done ? "border-white/5 opacity-60" : isOverdue ? "border-coral/40" : "border-white/10"}`}>
+                      <div className="flex items-start gap-3">
+                        <button onClick={() => toggleTaskDone(t.id)} className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition ${t.done ? "bg-lime border-lime" : "border-white/25 hover:border-lime"}`}>
+                          {t.done && <Check size={13} className="text-black" strokeWidth={3} />}
+                        </button>
+
+                        <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`font-medium text-sm truncate ${t.done ? "line-through text-white/40" : ""}`}>{t.title}</span>
+                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0" style={{ backgroundColor: prio.color + "26", color: prio.color }}>{prio.label}</span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[11px] text-white/40">
+                            {t.dueDate && <span className={isOverdue ? "text-coral font-medium" : ""}>{formatDateID(t.dueDate)}</span>}
+                            {subTotal > 0 && <span>{subDone}/{subTotal} sub-tugas</span>}
+                          </div>
+                          {subTotal > 0 && (
+                            <div className="h-[3px] bg-white/8 overflow-hidden rounded-full mt-2">
+                              <div className="h-full bg-lime rounded-full transition-all" style={{ width: `${(subDone / subTotal) * 100}%` }} />
                             </div>
                           )}
                         </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
 
-            <div className="pt-8 border-t border-white/10">
-              <div className="flex items-center justify-between mb-4">
-                <SectionLabel noMargin>Tracker Cicilan SPayLater</SectionLabel>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setShowSpaylaterHistory(true)} className="text-xs text-white/70 border border-white/20 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-white/5 transition"><History size={13} /> Riwayat</button>
-                  <button onClick={() => setShowAddSpaylater(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat</button>
-                </div>
-              </div>
-
-              <div className="flex flex-col md:flex-row gap-2.5 mb-6">
-                <div className="relative flex-1">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25" />
-                  <input
-                    value={spaySearch}
-                    onChange={(e) => setSpaySearch(e.target.value)}
-                    placeholder="Cari nama cicilan..."
-                    className="w-full bg-white/[0.04] border border-white/10 rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:border-lime placeholder:text-white/25 transition-colors text-white"
-                  />
-                </div>
-                <div className="relative shrink-0 w-full md:w-auto">
-                  <select
-                    value={spaySort}
-                    onChange={(e) => setSpaySort(e.target.value)}
-                    className="w-full md:w-auto pl-9 pr-8 py-2.5 bg-white/[0.04] border border-white/10 rounded-lg text-xs outline-none focus:border-lime text-white appearance-none cursor-pointer"
-                  >
-                    <option value="default" className="bg-surface">Urutan Default</option>
-                    <option value="name_asc" className="bg-surface">Nama (A - Z)</option>
-                    <option value="name_desc" className="bg-surface">Nama (Z - A)</option>
-                    <option value="price_desc" className="bg-surface">Harga Tertinggi</option>
-                    <option value="price_asc" className="bg-surface">Harga Terendah</option>
-                    <option value="tenor_desc" className="bg-surface">Tenor Terlama</option>
-                    <option value="tenor_asc" className="bg-surface">Tenor Tersingkat</option>
-                  </select>
-                  <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
-                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
-                </div>
-              </div>
-
-              {activeSpaylaterList.length === 0 && <EmptyRow>Belum ada tagihan SPayLater aktif / ditemukan.</EmptyRow>}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activeSpaylaterList.map((item) => {
-                  const monthlyPayment = item.totalAmount / item.tenor;
-                  const paidMonthsCount = item.paidChecklist.filter(Boolean).length;
-                  const remainingMonths = item.tenor - paidMonthsCount;
-
-                  return (
-                    <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-5 transition hover:bg-white/[0.05]">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <div className="font-semibold text-sm mb-1">{item.name}</div>
-                          <div className="text-[11px] text-white/40 tabular">Total: {rupiah(item.totalAmount)}</div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <button onClick={() => toggleSpaylaterFinished(item.id)} className="text-[10px] px-2.5 py-1 rounded-lg border bg-lime/10 border-lime/30 text-lime hover:bg-lime/20 font-medium">Finish</button>
-                          <button onClick={() => requestConfirm("Hapus Cicilan?", "Cicilan akan dihapus dari daftar.", () => deleteSpaylater(item.id))} className="text-white/20 hover:text-coral p-1"><Trash2 size={15} /></button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => setEditingTask(t)} className="text-white/30 hover:text-white p-1.5"><Edit2 size={13} /></button>
+                          <button onClick={() => requestConfirm("Hapus Tugas?", `Tugas "${t.title}" akan dihapus.`, () => deleteTask(t.id))} className="text-white/30 hover:text-coral p-1.5"><Trash2 size={13} /></button>
                         </div>
                       </div>
-                      <div className="flex justify-between items-end mb-5 border-b border-white/5 pb-4">
-                        <div>
-                          <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Per Bulan</div>
-                          <div className="font-medium text-lime text-base tabular">{rupiah(monthlyPayment)}</div>
+
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-white/5">
+                          {t.description && <p className="text-xs text-white/60 mb-3 leading-relaxed">{t.description}</p>}
+                          {Array.isArray(t.subtasks) && t.subtasks.length > 0 && (
+                            <div className="space-y-1.5">
+                              {t.subtasks.map((s) => (
+                                <label key={s.id} className="flex items-center gap-2 cursor-pointer">
+                                  <input type="checkbox" checked={s.done} onChange={() => toggleSubtask(t.id, s.id)} className="accent-lime w-3.5 h-3.5" />
+                                  <span className={`text-xs ${s.done ? "line-through text-white/30" : "text-white/70"}`}>{s.text}</span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div className="text-right text-[11px] text-white/50">{remainingMonths} bulan lagi</div>
-                      </div>
-                      <div className="text-[11px] text-white/40 mb-2">Checklist Pembayaran:</div>
-                      <div className="flex flex-wrap gap-2">
-                        {item.paidChecklist.map((isPaid, idx) => (
-                          <button key={idx} onClick={() => toggleSpaylaterPaid(item.id, idx)} className={`w-9 h-9 rounded-md flex items-center justify-center text-xs font-medium transition ${isPaid ? "bg-lime text-black font-bold" : "bg-white/5 border border-white/10 text-white/40 hover:border-lime/50"}`}>
-                            {idx + 1}
-                          </button>
-                        ))}
-                      </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Tab Tugas (Tasks) */}
-        {activeTab === "tasks" && (
-          <div>
-            <div className="flex items-center gap-4 mb-6">
-              <div>
-                <SectionLabel noMargin>Total Tugas</SectionLabel>
-                <div className="font-semibold text-lg tabular mt-1">{taskStats.total}</div>
-              </div>
-              <div>
-                <SectionLabel noMargin>Selesai</SectionLabel>
-                <div className="font-semibold text-lg tabular mt-1 text-teal">{taskStats.done}</div>
-              </div>
-              {taskStats.overdue > 0 && (
+          {activeTab === "wishlist" && (
+            <div>
+              <div className="flex items-center justify-between mb-6">
                 <div>
-                  <SectionLabel noMargin>Terlambat</SectionLabel>
-                  <div className="font-semibold text-lg tabular mt-1 text-coral flex items-center gap-1">
-                    <AlertCircle size={15} /> {taskStats.overdue}
-                  </div>
+                  <SectionLabel noMargin>Total sisa keperluan</SectionLabel>
+                  <div className="font-semibold text-lime tabular mt-1">{rupiah(wishlistTotal)}</div>
                 </div>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex bg-white/[0.04] p-1 rounded-lg">
-                <button onClick={() => setTaskFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Aktif</button>
-                <button onClick={() => setTaskFilter('done')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'done' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Selesai</button>
-                <button onClick={() => setTaskFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
+                <div className="flex bg-white/[0.04] p-1 rounded-lg">
+                  <button onClick={() => setWishlistFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
+                  <button onClick={() => setWishlistFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Belum</button>
+                  <button onClick={() => setWishlistFilter('bought')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'bought' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Sudah</button>
+                </div>
               </div>
-              <button onClick={() => setShowAddTask(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tugas Baru</button>
-            </div>
 
-            {sortedFilteredTasks.length === 0 && <EmptyRow>Tidak ada tugas di sini.</EmptyRow>}
+              <button onClick={() => setShowAddCategory(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Kategori Baru</button>
 
-            <div className="space-y-3">
-              {sortedFilteredTasks.map((t) => {
-                const prio = PRIORITIES.find((p) => p.id === t.priority) || PRIORITIES[1];
-                const isExpanded = expandedTaskId === t.id;
-                const subDone = Array.isArray(t.subtasks) ? t.subtasks.filter((s) => s.done).length : 0;
-                const subTotal = Array.isArray(t.subtasks) ? t.subtasks.length : 0;
-                const isOverdue = !t.done && t.dueDate && t.dueDate < todayKey();
+              {data.wishlistCategories.length === 0 && <EmptyRow>Belum ada wishlist.</EmptyRow>}
+
+              {data.wishlistCategories.map((cat) => {
+                const catTotal = cat.items.filter((i) => !i.bought).reduce((s, i) => s + i.price, 0);
+                const filteredItems = cat.items.filter(i => {
+                  if(wishlistFilter === 'active') return !i.bought;
+                  if(wishlistFilter === 'bought') return i.bought;
+                  return true;
+                });
+
+                if (wishlistFilter !== 'all' && filteredItems.length === 0) return null;
 
                 return (
-                  <div key={t.id} className={`bg-white/[0.03] border rounded-xl p-4 transition ${t.done ? "border-white/5 opacity-60" : isOverdue ? "border-coral/40" : "border-white/10"}`}>
-                    <div className="flex items-start gap-3">
-                      <button onClick={() => toggleTaskDone(t.id)} className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition ${t.done ? "bg-lime border-lime" : "border-white/25 hover:border-lime"}`}>
-                        {t.done && <Check size={13} className="text-black" strokeWidth={3} />}
-                      </button>
-
-                      <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`font-medium text-sm truncate ${t.done ? "line-through text-white/40" : ""}`}>{t.title}</span>
-                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0" style={{ backgroundColor: prio.color + "26", color: prio.color }}>{prio.label}</span>
-                        </div>
-                        <div className="flex items-center gap-3 text-[11px] text-white/40">
-                          {t.dueDate && <span className={isOverdue ? "text-coral font-medium" : ""}>{formatDateID(t.dueDate)}</span>}
-                          {subTotal > 0 && <span>{subDone}/{subTotal} sub-tugas</span>}
-                        </div>
-                        {subTotal > 0 && (
-                          <div className="h-[3px] bg-white/8 overflow-hidden rounded-full mt-2">
-                            <div className="h-full bg-lime rounded-full transition-all" style={{ width: `${(subDone / subTotal) * 100}%` }} />
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => setEditingTask(t)} className="text-white/30 hover:text-white p-1.5"><Edit2 size={13} /></button>
-                        <button onClick={() => requestConfirm("Hapus Tugas?", `Tugas "${t.title}" akan dihapus.`, () => deleteTask(t.id))} className="text-white/30 hover:text-coral p-1.5"><Trash2 size={13} /></button>
+                  <div key={cat.id} className="mb-8">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="font-semibold text-sm">{cat.name}</div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-[11px] text-white/40 tabular">{rupiah(catTotal)}</div>
+                        <button onClick={() => requestConfirm("Hapus Kategori?", "Kategori akan dihapus.", () => deleteWishlistCategory(cat.id))} className="text-white/20 hover:text-coral"><Trash2 size={13} /></button>
                       </div>
                     </div>
-
-                    {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-white/5">
-                        {t.description && <p className="text-xs text-white/60 mb-3 leading-relaxed">{t.description}</p>}
-                        {Array.isArray(t.subtasks) && t.subtasks.length > 0 && (
-                          <div className="space-y-1.5">
-                            {t.subtasks.map((s) => (
-                              <label key={s.id} className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={s.done} onChange={() => toggleSubtask(t.id, s.id)} className="accent-lime w-3.5 h-3.5" />
-                                <span className={`text-xs ${s.done ? "line-through text-white/30" : "text-white/70"}`}>{s.text}</span>
-                              </label>
-                            ))}
+                    {filteredItems.map((item) => {
+                      const isItemExpanded = expandedWishlistId === item.id;
+                      return (
+                        <div key={item.id} className="border-b border-white/5 py-2.5">
+                          <div className="flex items-center gap-3">
+                            <input type="checkbox" checked={item.bought} onChange={() => toggleWishlistBought(cat.id, item.id)} className="accent-lime shrink-0 w-4 h-4" />
+                            <div 
+                              onClick={() => setExpandedWishlistId(isItemExpanded ? null : item.id)}
+                              className={`flex-1 text-sm min-w-0 truncate cursor-pointer hover:text-lime transition ${item.bought ? "line-through text-white/30" : ""}`}
+                            >
+                              {item.name}
+                            </div>
+                            <div className={`text-sm tabular shrink-0 ${item.bought ? "text-white/30" : ""}`}>{rupiah(item.price)}</div>
+                            <button onClick={() => requestConfirm("Hapus Barang?", "Barang akan dihapus.", () => deleteWishlistItem(cat.id, item.id))} className="text-white/15 hover:text-coral ml-1"><X size={13} /></button>
                           </div>
-                        )}
-                      </div>
-                    )}
+                          {isItemExpanded && (
+                            <div className="mt-2.5 pl-7 flex items-center justify-between bg-white/[0.02] p-2 rounded-lg border border-white/10">
+                              {item.link ? (
+                                <a href={item.link.startsWith("http") ? item.link : `https://${item.link}`} target="_blank" rel="noopener noreferrer" className="text-xs text-teal hover:underline flex items-center gap-1.5 truncate mr-2">
+                                  <ExternalLink size={13} /> Buka Link Marketplace
+                                </a>
+                              ) : (
+                                <span className="text-[11px] text-white/30 italic">Belum ada link marketplace yang dimasukkan.</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <button onClick={() => { setAddItemCategory(cat.id); setShowAddItem(true); }} className="mt-2.5 text-[11px] text-white/40 hover:text-lime flex items-center gap-1"><Plus size={11} /> Tambah barang</button>
                   </div>
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Tab Wishlist */}
-        {activeTab === "wishlist" && (
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <SectionLabel noMargin>Total sisa keperluan</SectionLabel>
-                <div className="font-semibold text-lime tabular mt-1">{rupiah(wishlistTotal)}</div>
+          {activeTab === "lembur" && (
+            <div>
+              <SectionLabel>Pengaturan Lembur</SectionLabel>
+              <div className="mb-7 flex items-center gap-3 bg-white/[0.03] border border-white/10 rounded-lg px-4 py-3.5">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] text-white/40 mb-1">Gaji Pokok Bulanan</div>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={formatRupiahInput(data.overtimeRate)}
+                    onChange={(e) => updateOvertimeRate(parseRupiahInput(e.target.value))}
+                    className="w-full bg-transparent outline-none border-b border-white/10 focus:border-lime pb-1 text-sm font-medium tabular"
+                  />
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-[11px] text-white/40 mb-1">Rate / Jam</div>
+                  <div className="font-semibold text-lime tabular text-sm">{rupiah(Number(data.overtimeRate || 0) / 173)}</div>
+                </div>
               </div>
-              <div className="flex bg-white/[0.04] p-1 rounded-lg">
-                <button onClick={() => setWishlistFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
-                <button onClick={() => setWishlistFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Belum</button>
-                <button onClick={() => setWishlistFilter('bought')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'bought' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Sudah</button>
-              </div>
-            </div>
 
-            <button onClick={() => setShowAddCategory(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Kategori Baru</button>
-
-            {data.wishlistCategories.length === 0 && <EmptyRow>Belum ada wishlist.</EmptyRow>}
-
-            {data.wishlistCategories.map((cat) => {
-              const catTotal = cat.items.filter((i) => !i.bought).reduce((s, i) => s + i.price, 0);
-              const filteredItems = cat.items.filter(i => {
-                if(wishlistFilter === 'active') return !i.bought;
-                if(wishlistFilter === 'bought') return i.bought;
-                return true;
-              });
-
-              if (wishlistFilter !== 'all' && filteredItems.length === 0) return null;
-
-              return (
-                <div key={cat.id} className="mb-8">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="font-semibold text-sm">{cat.name}</div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-[11px] text-white/40 tabular">{rupiah(catTotal)}</div>
-                      <button onClick={() => requestConfirm("Hapus Kategori?", "Kategori akan dihapus.", () => deleteWishlistCategory(cat.id))} className="text-white/20 hover:text-coral"><Trash2 size={13} /></button>
-                    </div>
+              <div className="mb-7 text-xs border border-white/10 rounded-lg overflow-hidden">
+                <div className="grid grid-cols-2 divide-x divide-white/10">
+                  <div className="p-3.5">
+                    <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Kerja</div>
+                    <div className="flex justify-between text-white/70 mb-1"><span>1 jam</span><span>x1.5</span></div>
+                    <div className="flex justify-between text-white/70"><span>2 dst.</span><span>x2</span></div>
                   </div>
-                  {filteredItems.map((item) => {
-                    const isItemExpanded = expandedWishlistId === item.id;
-                    return (
-                      <div key={item.id} className="border-b border-white/5 py-2.5">
-                        <div className="flex items-center gap-3">
-                          <input type="checkbox" checked={item.bought} onChange={() => toggleWishlistBought(cat.id, item.id)} className="accent-lime shrink-0 w-4 h-4" />
-                          <div 
-                            onClick={() => setExpandedWishlistId(isItemExpanded ? null : item.id)}
-                            className={`flex-1 text-sm min-w-0 truncate cursor-pointer hover:text-lime transition ${item.bought ? "line-through text-white/30" : ""}`}
-                          >
-                            {item.name}
-                          </div>
-                          <div className={`text-sm tabular shrink-0 ${item.bought ? "text-white/30" : ""}`}>{rupiah(item.price)}</div>
-                          <button onClick={() => requestConfirm("Hapus Barang?", "Barang akan dihapus.", () => deleteWishlistItem(cat.id, item.id))} className="text-white/15 hover:text-coral ml-1"><X size={13} /></button>
-                        </div>
-                        {isItemExpanded && (
-                          <div className="mt-2.5 pl-7 flex items-center justify-between bg-white/[0.02] p-2 rounded-lg border border-white/10">
-                            {item.link ? (
-                              <a href={item.link.startsWith("http") ? item.link : `https://${item.link}`} target="_blank" rel="noopener noreferrer" className="text-xs text-teal hover:underline flex items-center gap-1.5 truncate mr-2">
-                                <ExternalLink size={13} /> Buka Link Marketplace
-                              </a>
-                            ) : (
-                              <span className="text-[11px] text-white/30 italic">Belum ada link marketplace yang dimasukkan.</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  <button onClick={() => { setAddItemCategory(cat.id); setShowAddItem(true); }} className="mt-2.5 text-[11px] text-white/40 hover:text-lime flex items-center gap-1"><Plus size={11} /> Tambah barang</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {activeTab === "lembur" && (
-          <div>
-            <SectionLabel>Pengaturan Lembur</SectionLabel>
-            <div className="mb-7 flex items-center gap-3 bg-white/[0.03] border border-white/10 rounded-lg px-4 py-3.5">
-              <div className="flex-1 min-w-0">
-                <div className="text-[11px] text-white/40 mb-1">Gaji Pokok Bulanan</div>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={formatRupiahInput(data.overtimeRate)}
-                  onChange={(e) => updateOvertimeRate(parseRupiahInput(e.target.value))}
-                  className="w-full bg-transparent outline-none border-b border-white/10 focus:border-lime pb-1 text-sm font-medium tabular"
-                />
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-[11px] text-white/40 mb-1">Rate / Jam</div>
-                <div className="font-semibold text-lime tabular text-sm">{rupiah(Number(data.overtimeRate || 0) / 173)}</div>
-              </div>
-            </div>
-
-            <div className="mb-7 text-xs border border-white/10 rounded-lg overflow-hidden">
-              <div className="grid grid-cols-2 divide-x divide-white/10">
-                <div className="p-3.5">
-                  <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Kerja</div>
-                  <div className="flex justify-between text-white/70 mb-1"><span>1 jam</span><span>x1.5</span></div>
-                  <div className="flex justify-between text-white/70"><span>2 dst.</span><span>x2</span></div>
-                </div>
-                <div className="p-3.5">
-                  <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Libur</div>
-                  <div className="flex justify-between text-white/70 mb-1"><span>1-8 jam</span><span>x2</span></div>
-                  <div className="flex justify-between text-white/70 mb-1"><span>9 jam</span><span>x3</span></div>
-                  <div className="flex justify-between text-white/70"><span>10 dst.</span><span>x4</span></div>
+                  <div className="p-3.5">
+                    <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Libur</div>
+                    <div className="flex justify-between text-white/70 mb-1"><span>1-8 jam</span><span>x2</span></div>
+                    <div className="flex justify-between text-white/70 mb-1"><span>9 jam</span><span>x3</span></div>
+                    <div className="flex justify-between text-white/70"><span>10 dst.</span><span>x4</span></div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <button onClick={() => setShowAddOvertime(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat Lembur</button>
+              <button onClick={() => setShowAddOvertime(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat Lembur</button>
 
-            {(!groupedOvertime || groupedOvertime.length === 0) && <EmptyRow>Belum ada catatan lembur.</EmptyRow>}
+              {(!groupedOvertime || groupedOvertime.length === 0) && <EmptyRow>Belum ada catatan lembur.</EmptyRow>}
 
-            {groupedOvertime?.map((g) => (
-              <div key={g.label} className="mb-8">
-                <div className="text-sm font-semibold mb-2.5">{g.label}</div>
-                <div className="overflow-x-auto no-scrollbar -mx-5 px-5 md:mx-0 md:px-0">
-                  <table className="w-full text-xs min-w-[650px]">
-                    <thead>
-                      <tr className="text-white/40 text-left border-b border-white/10">
-                        <th className="py-2 pr-2 font-normal">✓</th>
-                        <th className="py-2 pr-2 font-normal">Jenis</th>
-                        <th className="py-2 pr-2 font-normal">Tgl Lembur</th>
-                        <th className="py-2 pr-2 font-normal text-right">Jam</th>
-                        <th className="py-2 pr-2 font-normal text-right">Nominal</th>
-                        <th className="py-2 pr-2 font-normal text-right">Terhitung</th>
-                        <th className="py-2 pl-1 font-normal text-right">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.entries?.map((e) => (
-                        <tr key={e.id} className="border-b border-white/5">
-                          <td className="py-2 pr-2">
-                            <input type="checkbox" checked={e.paid} onChange={() => toggleOvertimePaid(e.id)} className="accent-lime w-4 h-4 cursor-pointer" />
-                          </td>
-                          <td className={`py-2 pr-2 ${e.jenis === "Libur" ? "text-coral" : "text-white/80"} ${!e.paid && "opacity-50"}`}>{e.jenis}</td>
-                          <td className={`py-2 pr-2 tabular whitespace-nowrap ${e.paid ? "text-white/70" : "text-white/30"}`}>{formatDateID(e.date)}</td>
-                          <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.totalJam}</td>
-                          <td className="py-2 pr-2 text-right tabular"><span className={e.paid ? "text-white" : "text-white/40"}>{rupiah(e.amount)}</span></td>
-                          <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.hrs}</td>
-                          <td className="py-2 pl-1 text-right flex items-center justify-end gap-1">
-                            <button onClick={() => setEditingOvertime(e)} className="text-white/30 hover:text-white p-1" title="Edit lembur"><Edit2 size={12} /></button>
-                            <button onClick={() => requestConfirm("Hapus Lembur?", "Catatan lembur akan dihapus.", () => deleteOvertimeEntry(e.id))} className="text-white/20 hover:text-coral p-1" title="Hapus"><Trash2 size={12} /></button>
-                          </td>
+              {groupedOvertime?.map((g) => (
+                <div key={g.label} className="mb-8">
+                  <div className="text-sm font-semibold mb-2.5">{g.label}</div>
+                  <div className="overflow-x-auto no-scrollbar swipe-ignore -mx-5 px-5 md:mx-0 md:px-0">
+                    <table className="w-full text-xs min-w-[650px]">
+                      <thead>
+                        <tr className="text-white/40 text-left border-b border-white/10">
+                          <th className="py-2 pr-2 font-normal">✓</th>
+                          <th className="py-2 pr-2 font-normal">Jenis</th>
+                          <th className="py-2 pr-2 font-normal">Tgl Lembur</th>
+                          <th className="py-2 pr-2 font-normal text-right">Jam</th>
+                          <th className="py-2 pr-2 font-normal text-right">Nominal</th>
+                          <th className="py-2 pr-2 font-normal text-right">Terhitung</th>
+                          <th className="py-2 pl-1 font-normal text-right">Aksi</th>
                         </tr>
-                      ))}
-                      <tr className="font-semibold">
-                        <td colSpan={4} className="py-2 pr-2 pt-3">Total</td>
-                        <td className="py-2 pr-2 pt-3 text-right tabular">
-                          <div className="text-lime">{rupiah(g.totalCair)}</div>
-                          {g.totalRp !== g.totalCair && <div className="text-[9px] text-white/40">dari {rupiah(g.totalRp)}</div>}
-                        </td>
-                        <td className="py-2 pr-2 pt-3 text-right tabular">{g.totalHrs}</td>
-                        <td></td>
-                      </tr>
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {g.entries?.map((e) => (
+                          <tr key={e.id} className="border-b border-white/5">
+                            <td className="py-2 pr-2">
+                              <input type="checkbox" checked={e.paid} onChange={() => toggleOvertimePaid(e.id)} className="accent-lime w-4 h-4 cursor-pointer" />
+                            </td>
+                            <td className={`py-2 pr-2 ${e.jenis === "Libur" ? "text-coral" : "text-white/80"} ${!e.paid && "opacity-50"}`}>{e.jenis}</td>
+                            <td className={`py-2 pr-2 tabular whitespace-nowrap ${e.paid ? "text-white/70" : "text-white/30"}`}>{formatDateID(e.date)}</td>
+                            <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.totalJam}</td>
+                            <td className="py-2 pr-2 text-right tabular"><span className={e.paid ? "text-white" : "text-white/40"}>{rupiah(e.amount)}</span></td>
+                            <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.hrs}</td>
+                            <td className="py-2 pl-1 text-right flex items-center justify-end gap-1">
+                              <button onClick={() => setEditingOvertime(e)} className="text-white/30 hover:text-white p-1" title="Edit lembur"><Edit2 size={12} /></button>
+                              <button onClick={() => requestConfirm("Hapus Lembur?", "Catatan lembur akan dihapus.", () => deleteOvertimeEntry(e.id))} className="text-white/20 hover:text-coral p-1" title="Hapus"><Trash2 size={12} /></button>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="font-semibold">
+                          <td colSpan={4} className="py-2 pr-2 pt-3">Total</td>
+                          <td className="py-2 pr-2 pt-3 text-right tabular">
+                            <div className="text-lime">{rupiah(g.totalCair)}</div>
+                            {g.totalRp !== g.totalCair && <div className="text-[9px] text-white/40">dari {rupiah(g.totalRp)}</div>}
+                          </td>
+                          <td className="py-2 pr-2 pt-3 text-right tabular">{g.totalHrs}</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {activeTab === "home" && (
