@@ -372,6 +372,7 @@ export default function AgrLedgerApp() {
   const importInputRef = useRef(null);
   const [activePopup, setActivePopup] = useState(null);
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
+  const [showSalaryHistory, setShowSalaryHistory] = useState(false);
 
   function handleTouchStart(e) {
     touchStartX.current = e.touches[0].clientX;
@@ -1580,16 +1581,23 @@ export default function AgrLedgerApp() {
                         Total Limit: <span className="text-white font-medium tabular">{rupiah(data.monthlyBudget)}</span>
                       </div>
 
-                      <div className="flex gap-4">
-                        <div>
-                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
-                          <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
-                          <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
+                      <div className="flex items-start justify-between">
+                        <div className="flex gap-4">
+                          <div>
+                            <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
+                            <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
+                            <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
+                          </div>
                         </div>
                       </div>
+
+                      {/* Tombol Riwayat Gaji Kotor di Beranda */}
+                      <button onClick={() => setShowSalaryHistory(true)} className="mt-3 text-[10px] text-lime hover:underline flex items-center gap-1">
+                        <History size={10} /> Riwayat Gaji Kotor
+                      </button>
                     </div>
                   </div>
 
@@ -1859,8 +1867,6 @@ export default function AgrLedgerApp() {
                       const currentYearStr = String(data.activeYear);
                       const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
                       const isFirstYear = sortedYears[0] === Number(currentYearStr);
-                      const salList = salaryByMonth[`${data.activeYear}-${index}`] || [];
-                      const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
                       const lemburBulanIni = overtimeAmountByMonth[`${data.activeYear}-${index}`] || 0;
 
                       return (
@@ -1881,21 +1887,21 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji Read-only, diklik muncul popup rincian */}
+                          {/* Gaji Bersih sebagai angka utama, lembur jadi pengurang di bawahnya */}
                           <td className="py-1.5 pr-3 text-right">
-                            {rawGajiKotor > 0 ? (
+                            {row.gaji > 0 ? (
                               <span
                                 className="cursor-pointer border-b border-dotted border-lime/50 inline-block py-0.5 tabular text-lime font-medium"
                                 onClick={(e) => handleTogglePopup(e, m, salaryByMonth[`${data.activeYear}-${index}`] || [], "Gaji")}
                               >
-                                {rawGajiKotor.toLocaleString("id-ID")}
+                                {row.gaji.toLocaleString("id-ID")}
                               </span>
                             ) : (
-                              <span className="text-white/30">0</span>
+                              <span className="text-white/30 py-0.5 inline-block">0</span>
                             )}
                             {lemburBulanIni > 0 && (
-                              <div className="text-[9px] text-white/35 text-right tabular whitespace-nowrap">
-                                bersih: {row.gaji.toLocaleString("id-ID")}
+                              <div className="text-[9px] text-coral text-right tabular whitespace-nowrap">
+                                -lembur {lemburBulanIni.toLocaleString("id-ID")}
                               </div>
                             )}
                           </td>
@@ -2415,6 +2421,33 @@ export default function AgrLedgerApp() {
               )}
             </div>
             <button onClick={() => setShowSpaylaterHistory(false)} className="mt-4 w-full bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg py-3 text-xs">Tutup</button>
+          </div>
+        </div>
+      )}
+
+      {showSalaryHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
+          <div className="w-full max-w-md bg-surface rounded-2xl p-6 border border-white/10 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="font-semibold text-base flex items-center gap-2"><History size={16} className="text-lime" /> Riwayat Gaji Kotor</div>
+              <button onClick={() => setShowSalaryHistory(false)} className="text-white/40 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-3 overflow-y-auto flex-1 pr-1">
+              {(!data.salaryEntries || data.salaryEntries.length === 0) ? (
+                <div className="text-xs text-white/40 text-center py-8">Belum ada riwayat gaji</div>
+              ) : (
+                [...data.salaryEntries].sort((a, b) => b.date.localeCompare(a.date)).map((item) => (
+                  <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm text-white truncate">{formatDateID(item.date)}</div>
+                      <div className="text-xs font-medium text-lime tabular mt-1">{rupiah(item.amount)}</div>
+                    </div>
+                    <button onClick={() => requestConfirm("Hapus Riwayat Gaji?", "Entri gaji kotor ini akan dihapus.", () => deleteSalaryEntry(item.id))} className="text-white/30 hover:text-coral p-2"><Trash2 size={15} /></button>
+                  </div>
+                ))
+              )}
+            </div>
+            <button onClick={() => setShowSalaryHistory(false)} className="mt-4 w-full bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg py-3 text-xs">Tutup</button>
           </div>
         </div>
       )}
