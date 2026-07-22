@@ -329,14 +329,14 @@ export default function AgrLedgerApp() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [activePopup]);
 
+  // FIX 1: Gunakan .upsert() daripada .update()
   useEffect(() => {
     if (!loaded || !data) return;
     const timeout = setTimeout(async () => {
       try {
         const { error } = await supabase
           .from("ledger_data")
-          .update({ data, updated_at: new Date().toISOString() })
-          .eq("id", 1);
+          .upsert({ id: 1, data, updated_at: new Date().toISOString() });
         if (error) throw error;
       } catch (err) {
         showError("Gagal menyimpan data ke server.");
@@ -636,18 +636,14 @@ export default function AgrLedgerApp() {
 
   const routineByMonth = useMemo(() => {
     const map = {};
-    const activeY = Number(data?.activeYear || new Date().getFullYear());
     if (Array.isArray(data?.routineEntries)) {
       data.routineEntries.forEach((item) => {
         if (!item) return;
-        const itemYear = Number(item.activeYear || activeY);
-        if (itemYear !== activeY) return;
-
         const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
         const stopIdx = item.stopIndex !== undefined ? Number(item.stopIndex) : 11;
 
         for (let mIdx = startIdx; mIdx <= stopIdx; mIdx++) {
-          const key = `${activeY}-${mIdx}`;
+          const key = `${item.activeYear}-${mIdx}`;
           if (!map[key]) map[key] = [];
           map[key].push({
             id: item.id,
@@ -802,28 +798,82 @@ export default function AgrLedgerApp() {
     setIsDeleteMode(false);
   }
 
+  // FIX 2: Modifikasi Rutin agar otomatis masuk juga ke tahun-tahun depan yang sudah dibuat.
   function addRoutineEntry({ name, amount, startIndex }) {
-    setData((prev) => ({
-      ...prev,
-      routineEntries: [
-        { id: crypto.randomUUID(), name, amount: Number(amount), activeYear: prev.activeYear, startIndex: Number(startIndex), stopIndex: 11 },
-        ...(prev.routineEntries || []),
-      ],
-    }));
+    setData((prev) => {
+      const activeY = Number(prev.activeYear);
+      const sortedYears = Object.keys(prev.budgetYears).map(Number).sort((a, b) => a - b);
+      const targetYears = sortedYears.filter(y => y >= activeY);
+      
+      const newEntries = [];
+      targetYears.forEach(y => {
+        newEntries.push({
+          id: crypto.randomUUID(),
+          name,
+          amount: Number(amount),
+          activeYear: y,
+          startIndex: y === activeY ? Number(startIndex) : 0,
+          stopIndex: 11
+        });
+      });
+
+      return {
+        ...prev,
+        routineEntries: [
+          ...newEntries,
+          ...(prev.routineEntries || []),
+        ],
+      };
+    });
   }
 
   function updateRoutineEntry(id, updatedData) {
-    setData((prev) => ({
-      ...prev,
-      routineEntries: prev.routineEntries.map((e) => (e.id === id ? { ...e, ...updatedData } : e)),
-    }));
+    setData((prev) => {
+      const targetEntry = prev.routineEntries.find(e => e.id === id);
+      if (!targetEntry) return prev;
+      
+      const currentActiveYear = Number(targetEntry.activeYear);
+      const isStopping = updatedData.stopIndex !== undefined;
+
+      const newEntries = prev.routineEntries.map((e) => {
+        // Jika ini adalah entry spesifik yg di-edit
+        if (e.id === id) {
+          return { ...e, ...updatedData };
+        }
+        // Jika ini perubahan nama/amount, terapkan juga di tahun berikutnya agar sinkron
+        if (!isStopping && e.name === targetEntry.name && Number(e.activeYear) > currentActiveYear) {
+          return { 
+            ...e, 
+            name: updatedData.name !== undefined ? updatedData.name : e.name, 
+            amount: updatedData.amount !== undefined ? updatedData.amount : e.amount 
+          };
+        }
+        return e;
+      });
+
+      // Jika kita menghentikan (stop) rutin di tahun ini, hapus entry rutin tersebut dari tahun-tahun depan
+      let finalEntries = newEntries;
+      if (isStopping && updatedData.stopIndex < 11) {
+        finalEntries = finalEntries.filter(e => !(e.name === targetEntry.name && Number(e.activeYear) > currentActiveYear));
+      }
+
+      return { ...prev, routineEntries: finalEntries };
+    });
   }
 
   function deleteRoutineEntry(id) {
-    setData((prev) => ({
-      ...prev,
-      routineEntries: prev.routineEntries.filter((e) => e.id !== id),
-    }));
+    setData((prev) => {
+      const targetEntry = prev.routineEntries.find(e => e.id === id);
+      if (!targetEntry) return prev;
+      
+      // Hapus entry ini dan entry duplikat (yang bersambung) di tahun-tahun berikutnya
+      return {
+        ...prev,
+        routineEntries: prev.routineEntries.filter((e) => 
+          !(e.id === id || (e.name === targetEntry.name && Number(e.activeYear) > Number(targetEntry.activeYear)))
+        ),
+      };
+    });
   }
 
   const wishlistTotal = useMemo(() => {
