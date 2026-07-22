@@ -30,7 +30,6 @@ import {
   ListChecks,
   AlertCircle,
   ExternalLink,
-  Briefcase,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -671,10 +670,7 @@ export default function AgrLedgerApp() {
       const monthIndex = MONTHS.indexOf(month);
 
       if (field === "gaji") {
-        for (let i = monthIndex; i < MONTHS.length; i++) {
-          const mName = MONTHS[i];
-          yearMonths[mName] = { ...yearMonths[mName], gaji: value };
-        }
+        yearMonths[month] = { ...yearMonths[month], gaji: value };
       } else {
         yearMonths[month] = { ...yearMonths[month], [field]: value };
       }
@@ -815,7 +811,6 @@ export default function AgrLedgerApp() {
     }
 
     const yearMonths = allBudgetYears[yearKey].months;
-    const resolvedGajiList = getResolvedGajiForYear(yearKey, allBudgetYears);
 
     MONTHS.forEach((m, idx) => {
       const spaylaterList = spaylaterByMonth[`${yearKey}-${idx}`] || [];
@@ -843,8 +838,8 @@ export default function AgrLedgerApp() {
         });
       }
 
-      const gajiKotor = resolvedGajiList[idx];
-      const gajiBersih = Math.max(0, gajiKotor - totalLemburBulanIni);
+      const rawGajiKotor = yearMonths[m]?.gaji || 0;
+      const gajiBersih = Math.max(0, rawGajiKotor - totalLemburBulanIni);
 
       const mRow = { 
         ...yearMonths[m], 
@@ -858,30 +853,6 @@ export default function AgrLedgerApp() {
     });
 
     return runningBal;
-  }
-
-  function getResolvedGajiForYear(yearKey, allBudgetYears) {
-    if (!allBudgetYears[yearKey]) return Array(12).fill(0);
-    const yearMonths = allBudgetYears[yearKey].months;
-    const rawGaji = MONTHS.map((m) => yearMonths[m].gaji || 0);
-
-    const sortedExistingYears = Object.keys(allBudgetYears).map(Number).sort((a, b) => a - b);
-    const currIdx = sortedExistingYears.indexOf(Number(yearKey));
-
-    let inheritedBase = 0;
-    if (currIdx > 0) {
-      const prevYearKey = String(sortedExistingYears[currIdx - 1]);
-      const prevResolvedGaji = getResolvedGajiForYear(prevYearKey, allBudgetYears);
-      inheritedBase = prevResolvedGaji[prevResolvedGaji.length - 1];
-    }
-
-    const resolved = [];
-    let currentVal = inheritedBase;
-    for (let i = 0; i < 12; i++) {
-      if (rawGaji[i] > 0) currentVal = rawGaji[i];
-      resolved.push(currentVal);
-    }
-    return resolved;
   }
 
   function addBudgetYear() {
@@ -1171,7 +1142,6 @@ export default function AgrLedgerApp() {
     });
   }
 
-  // Handler khusus untuk input Gaji dari menu Catat Transaksi
   function addSalaryEntry({ amount, date }) {
     if (!date || !amount) return;
     const d = new Date(date + "T00:00:00");
@@ -1190,7 +1160,7 @@ export default function AgrLedgerApp() {
         };
       }
       
-      // Update HANYA bulan tersebut, TIDAK mengubah bulan lain / bulan depan
+      // Mengisi Gaji kotor HANYA pada bulan tersebut tanpa mengubah bulan depan/lainnya
       const targetMonthData = nextBudgetYears[year].months[monthName] || { saldoAwal: 0, gaji: 0, keterangan: "" };
       nextBudgetYears[year].months[monthName] = {
         ...targetMonthData,
@@ -1319,7 +1289,6 @@ export default function AgrLedgerApp() {
     }
 
     const rawMonths = data.budgetYears[currentYearStr].months;
-    const resolvedGajiList = getResolvedGajiForYear(currentYearStr, data.budgetYears);
     const computedMonths = {};
     let runningBalance = baseJanSaldo;
 
@@ -1338,8 +1307,8 @@ export default function AgrLedgerApp() {
       const rutList = routineByMonth[`${currentYearStr}-${index}`] || [];
       const totalRutinOtomatis = rutList.reduce((s, i) => s + i.amount, 0);
 
-      const gajiKotor = resolvedGajiList[index];
-      const gajiBersih = Math.max(0, gajiKotor - totalLemburBulanIni);
+      const rawGajiKotor = rawMonths[m]?.gaji || 0;
+      const gajiBersih = Math.max(0, rawGajiKotor - totalLemburBulanIni);
 
       const row = {
         ...(rawMonths[m] || { saldoAwal: 0, keterangan: "" }),
@@ -1879,6 +1848,8 @@ export default function AgrLedgerApp() {
                       const currentYearStr = String(data.activeYear);
                       const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
                       const isFirstYear = sortedYears[0] === Number(currentYearStr);
+                      const rawGajiKotor = data.budgetYears[currentYearStr]?.months[m]?.gaji || 0;
+                      const lemburBulanIni = overtimeAmountByMonth[`${data.activeYear}-${index}`] || 0;
 
                       return (
                         <tr key={m} className="border-b border-white/5">
@@ -1898,18 +1869,20 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji */}
+                          {/* Gaji Kotor & Bersih (dikurangi lembur jika ada) */}
                           <td className="py-1.5 pr-3 text-right">
                             <input
                               type="text"
                               inputMode="numeric"
-                              value={(row.gaji || 0) === 0 ? "" : (row.gaji || 0).toLocaleString("id-ID")}
+                              value={rawGajiKotor === 0 ? "" : rawGajiKotor.toLocaleString("id-ID")}
                               onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
                               placeholder="0"
                               className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
                             />
-                            {overtimeAmountByMonth[`${data.activeYear}-${index}`] > 0 && (
-                              <div className="text-[9px] text-white/30 text-right tabular whitespace-nowrap">bersih: {(row.gaji || 0).toLocaleString("id-ID")}</div>
+                            {lemburBulanIni > 0 && (
+                              <div className="text-[9px] text-white/35 text-right tabular whitespace-nowrap">
+                                bersih: {row.gaji.toLocaleString("id-ID")}
+                              </div>
                             )}
                           </td>
 
@@ -2558,7 +2531,7 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
         </div>
         
-        {/* Pilihan Jenis Transaksi termasuk Gaji */}
+        {/* Pilihan Jenis Transaksi */}
         <div className="flex gap-1 bg-white/[0.04] rounded-lg p-1 mb-5 overflow-x-auto">
           {[
             { id: "expense", label: "Keluar" },
