@@ -8,6 +8,8 @@ import {
   X,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
   Sparkles,
   Trash2,
   Target,
@@ -24,6 +26,11 @@ import {
   ArrowRightLeft,
   History,
   RotateCcw,
+  Filter,
+  ListChecks,
+  AlertCircle,
+  ExternalLink,
+  Star,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -44,10 +51,18 @@ const CATEGORIES = [
   { id: "lainnya", label: "Lainnya", emoji: "✨", color: "#6EE7B7" },
 ];
 
+const PRIORITIES = [
+  { id: "high", label: "Tinggi", color: "#FF7A6B" },
+  { id: "medium", label: "Sedang", color: "#FFB84D" },
+  { id: "low", label: "Rendah", color: "#7CE3FF" },
+];
+
 const MONTHS = [
   "Januari", "Februari", "Maret", "April", "Mei", "Juni",
   "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ];
+
+const TAB_ORDER = ["home", "budget", "tasks", "wishlist", "lembur"];
 
 const rupiah = (n) =>
   "Rp" + Math.round(n || 0).toLocaleString("id-ID");
@@ -99,6 +114,7 @@ const seedData = () => ({
   wallets: [
     { id: "w1", name: "Dompet Utama", balance: 0, color: "#D4FF3F" },
   ],
+  primaryWalletId: "w1",
   transactions: [],
   monthlyBudget: 500000,
   goals: [
@@ -111,6 +127,8 @@ const seedData = () => ({
   overtimeEntries: [],
   spaylater: [],
   routineEntries: [],
+  tasks: [],
+  salaryEntries: [],
 });
 
 function migrateData(raw) {
@@ -128,6 +146,10 @@ function migrateData(raw) {
     delete merged.goal;
   }
   if (!merged.goals) merged.goals = seed.goals;
+
+  if (!merged.primaryWalletId || !merged.wallets.some(w => w.id === merged.primaryWalletId)) {
+    merged.primaryWalletId = merged.wallets[0]?.id || null;
+  }
   
   if (merged.dailyBudget !== undefined && merged.monthlyBudget === undefined) {
     merged.monthlyBudget = merged.dailyBudget * 30;
@@ -136,10 +158,61 @@ function migrateData(raw) {
   if (typeof merged.monthlyBudget !== "number") merged.monthlyBudget = seed.monthlyBudget;
 
   if (!merged.wishlistCategories) merged.wishlistCategories = [];
+  else {
+    merged.wishlistCategories = merged.wishlistCategories.map(cat => ({
+      ...cat,
+      items: Array.isArray(cat.items) ? cat.items.map(i => ({ ...i, link: i.link || "" })) : []
+    }));
+  }
+
   if (typeof merged.overtimeRate !== "number") merged.overtimeRate = seed.overtimeRate;
   if (!Array.isArray(merged.overtimeEntries)) merged.overtimeEntries = [];
   if (!Array.isArray(merged.spaylater)) merged.spaylater = [];
   if (!Array.isArray(merged.routineEntries)) merged.routineEntries = [];
+  if (!Array.isArray(merged.tasks)) merged.tasks = [];
+  if (!Array.isArray(merged.salaryEntries)) merged.salaryEntries = [];
+
+  const defaultWalletId = merged.primaryWalletId || merged.wallets?.[0]?.id || "w1";
+  merged.salaryEntries = merged.salaryEntries.map(e => ({
+    ...e,
+    walletId: e.walletId || defaultWalletId,
+  }));
+
+  if (merged.salaryEntries.length === 0) {
+    for (const y of Object.keys(merged.budgetYears)) {
+      MONTHS.forEach((m, idx) => {
+        const g = merged.budgetYears[y].months[m]?.gaji;
+        if (g && g > 0) {
+          merged.salaryEntries.push({
+            id: crypto.randomUUID(),
+            amount: g,
+            date: `${y}-${String(idx + 1).padStart(2, "0")}-01`,
+            walletId: defaultWalletId,
+          });
+        }
+      });
+    }
+  }
+
+  merged.spaylater = merged.spaylater.map(s => ({
+    ...s,
+    walletId: s.walletId || defaultWalletId,
+  }));
+
+  merged.tasks = merged.tasks.map(t => ({
+    id: t.id || crypto.randomUUID(),
+    title: t.title || "Tugas",
+    description: t.description || "",
+    priority: t.priority || "medium",
+    dueDate: t.dueDate || "",
+    done: !!t.done,
+    createdAt: t.createdAt || Date.now(),
+    subtasks: Array.isArray(t.subtasks) ? t.subtasks.map(sub => ({
+      id: sub.id || crypto.randomUUID(),
+      text: sub.text || "",
+      done: !!sub.done,
+    })) : [],
+  }));
 
   for (const y of Object.keys(merged.budgetYears)) {
     if (merged.budgetYears[y] && merged.budgetYears[y].months) {
@@ -227,6 +300,7 @@ function TopTabs({ active, onChange }) {
   const tabs = [
     { id: "home", label: "Beranda", icon: Home },
     { id: "budget", label: "Budget", icon: Calendar },
+    { id: "tasks", label: "Tugas", icon: ListChecks },
     { id: "wishlist", label: "Wishlist", icon: Heart },
     { id: "lembur", label: "Lembur", icon: Clock },
   ];
@@ -257,6 +331,10 @@ export default function AgrLedgerApp() {
   const [loaded, setLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState("home");
 
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
+  const ignoreSwipeRef = useRef(false);
+
   const [showAdd, setShowAdd] = useState(false);
   const [addType, setAddType] = useState("expense");
   const [editingTx, setEditingTx] = useState(null);
@@ -270,6 +348,7 @@ export default function AgrLedgerApp() {
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
   const [addItemCategory, setAddItemCategory] = useState(null);
+  const [expandedWishlistId, setExpandedWishlistId] = useState(null);
 
   const [showAddOvertime, setShowAddOvertime] = useState(false);
   const [editingOvertime, setEditingOvertime] = useState(null);
@@ -279,6 +358,15 @@ export default function AgrLedgerApp() {
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [routineEditListMode, setRoutineEditListMode] = useState(false);
   const [routineStopTarget, setRoutineStopTarget] = useState(null);
+  const [isRoutineCollapsed, setIsRoutineCollapsed] = useState(false);
+
+  const [spaySearch, setSpaySearch] = useState("");
+  const [spaySort, setSpaySort] = useState("default");
+
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [taskFilter, setTaskFilter] = useState("active");
+  const [expandedTaskId, setExpandedTaskId] = useState(null);
 
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [editingGoalId, setEditingGoalId] = useState(null);
@@ -290,6 +378,9 @@ export default function AgrLedgerApp() {
   const [editingWalletId, setEditingWalletId] = useState(null);
   const [editingWalletName, setEditingWalletName] = useState("");
 
+  const [editingBalanceId, setEditingBalanceId] = useState(null);
+  const [editingBalanceValue, setEditingBalanceValue] = useState("");
+
   const [calendarDate, setCalendarDate] = useState(new Date());
 
   const [isDeleteMode, setIsDeleteMode] = useState(false);
@@ -299,6 +390,32 @@ export default function AgrLedgerApp() {
   const importInputRef = useRef(null);
   const [activePopup, setActivePopup] = useState(null);
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
+  const [showSalaryHistory, setShowSalaryHistory] = useState(false);
+
+  function handleTouchStart(e) {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    ignoreSwipeRef.current = !!e.target.closest(".swipe-ignore");
+  }
+
+  function handleTouchEnd(e) {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const dy = e.changedTouches[0].clientY - touchStartY.current;
+    touchStartX.current = null;
+    touchStartY.current = null;
+
+    if (ignoreSwipeRef.current) return;
+
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+
+    const currentIndex = TAB_ORDER.indexOf(activeTab);
+    if (dx < 0 && currentIndex < TAB_ORDER.length - 1) {
+      setActiveTab(TAB_ORDER[currentIndex + 1]);
+    } else if (dx > 0 && currentIndex > 0) {
+      setActiveTab(TAB_ORDER[currentIndex - 1]);
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -335,8 +452,7 @@ export default function AgrLedgerApp() {
       try {
         const { error } = await supabase
           .from("ledger_data")
-          .update({ data, updated_at: new Date().toISOString() })
-          .eq("id", 1);
+          .upsert({ id: 1, data, updated_at: new Date().toISOString() });
         if (error) throw error;
       } catch (err) {
         showError("Gagal menyimpan data ke server.");
@@ -357,10 +473,14 @@ export default function AgrLedgerApp() {
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    const width = 260;
+    const width = 288;
     let left = rect.left + rect.width / 2 - width / 2;
     left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+    
     let top = rect.bottom + 8;
+    if (window.innerHeight - top < 250) {
+      top = Math.max(12, rect.top - Math.min(300, window.innerHeight / 2) - 8);
+    }
     
     setActivePopup({ left, top, label: monthLabel, breakdown, typeLabel });
   }
@@ -412,9 +532,88 @@ export default function AgrLedgerApp() {
 
   function handleImportFileChange(e) {
     const file = e.target.files?.[0];
+    if (file) {
+      requestConfirm("Timpa Data?", "Mengimpor file ini akan mengganti seluruh data Ledger saat ini.", () => importDataFromFile(file));
+    }
     e.target.value = "";
-    if (!file) return;
-    requestConfirm("Timpa Data?", "Mengimpor file ini akan mengganti seluruh data Ledger saat ini.", () => importDataFromFile(file));
+  }
+
+  function adjustWalletBalance(id, newBalance) {
+    setData((prev) => ({
+      ...prev,
+      wallets: prev.wallets.map((w) =>
+        w.id === id ? { ...w, balance: newBalance } : w
+      ),
+    }));
+  }
+
+  function setPrimaryWallet(id) {
+    setData((prev) => ({ ...prev, primaryWalletId: id }));
+  }
+
+  function addTask({ title, description, priority, dueDate, subtasks }) {
+    setData((prev) => ({
+      ...prev,
+      tasks: [
+        {
+          id: crypto.randomUUID(),
+          title,
+          description,
+          priority,
+          dueDate,
+          done: false,
+          createdAt: Date.now(),
+          subtasks: subtasks.map((s) => ({ id: s.id || crypto.randomUUID(), text: s.text, done: !!s.done })),
+        },
+        ...prev.tasks,
+      ],
+    }));
+  }
+
+  function updateTask(id, updatedData) {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) => (t.id === id ? { ...t, ...updatedData } : t)),
+    }));
+  }
+
+  function deleteTask(id) {
+    setData((prev) => ({ ...prev, tasks: prev.tasks.filter((t) => t.id !== id) }));
+  }
+
+  function toggleTaskDone(id) {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) => {
+        if (t.id !== id) return t;
+        const newDone = !t.done;
+        const newSubtasks = t.subtasks.map((s) => ({ ...s, done: newDone }));
+        return { ...t, done: newDone, subtasks: newSubtasks };
+      }),
+    }));
+  }
+
+  function toggleSubtask(taskId, subtaskId) {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) => {
+        if (t.id !== taskId) return t;
+        const newSubtasks = t.subtasks.map((s) =>
+          s.id === subtaskId ? { ...s, done: !s.done } : s
+        );
+        const allDone = newSubtasks.length > 0 && newSubtasks.every((s) => s.done);
+        return { ...t, subtasks: newSubtasks, done: allDone };
+      }),
+    }));
+  }
+
+  function addWishlistItem(catId, { name, price, link }) {
+    setData((prev) => ({
+      ...prev,
+      wishlistCategories: prev.wishlistCategories.map((c) =>
+        c.id === catId ? { ...c, items: [...c.items, { id: crypto.randomUUID(), name, price, link: link || "", bought: false }] } : c
+      ),
+    }));
   }
 
   const totals = useMemo(() => {
@@ -516,17 +715,7 @@ export default function AgrLedgerApp() {
   function updateBudgetCell(year, month, field, value) {
     setData((prev) => {
       const yearMonths = { ...prev.budgetYears[year].months };
-      const monthIndex = MONTHS.indexOf(month);
-
-      if (field === "gaji") {
-        for (let i = monthIndex; i < MONTHS.length; i++) {
-          const mName = MONTHS[i];
-          yearMonths[mName] = { ...yearMonths[mName], gaji: value };
-        }
-      } else {
-        yearMonths[month] = { ...yearMonths[month], [field]: value };
-      }
-
+      yearMonths[month] = { ...yearMonths[month], [field]: value };
       return {
         ...prev,
         budgetYears: {
@@ -591,63 +780,64 @@ export default function AgrLedgerApp() {
     const map = {};
     const rawMap = {};
 
-    if (Array.isArray(data?.overtimeEntries)) {
-      data.overtimeEntries.forEach((item) => {
-        if (!item || !item.paid) return; 
-        const target = item.targetMonth || (item.date ? item.date.slice(0, 7) : todayKey().slice(0, 7));
-        const [y, m] = target.split("-").map(Number);
-        const key = `${y}-${m - 1}`;
-        if (!rawMap[key]) rawMap[key] = { biasa: 0, libur: 0, others: [] };
-        
-        const { amount } = computeOvertime(data.overtimeRate || 0, item.jenis, item.totalJam || 0);
-        if (item.jenis === "Biasa") {
-          rawMap[key].biasa += amount;
-        } else {
-          rawMap[key].libur += amount;
-        }
-      });
-    }
-
     if (Array.isArray(data?.transactions)) {
       data.transactions.forEach((item) => {
         if (item && item.type === "income" && item.date) {
           const d = new Date(item.date + "T00:00:00");
           if (isNaN(d.getTime())) return;
           const key = `${d.getFullYear()}-${d.getMonth()}`;
-          if (!rawMap[key]) rawMap[key] = { biasa: 0, libur: 0, others: [] };
-          rawMap[key].others.push({ id: item.id, name: item.note || "Pemasukan", amount: item.amount || 0 });
+          if (!rawMap[key]) rawMap[key] = [];
+          rawMap[key].push({ id: item.id, name: item.note || "Pemasukan", amount: item.amount || 0 });
         }
       });
     }
 
     Object.keys(rawMap).forEach(key => {
       map[key] = [];
-      if (rawMap[key].biasa > 0) {
-        map[key].push({ id: `lembur-biasa-${key}`, name: "Lembur (Biasa)", amount: rawMap[key].biasa });
-      }
-      if (rawMap[key].libur > 0) {
-        map[key].push({ id: `lembur-libur-${key}`, name: "Lembur (Libur)", amount: rawMap[key].libur });
-      }
-      rawMap[key].others.forEach(o => map[key].push(o));
+      rawMap[key].forEach(o => map[key].push(o));
     });
 
     return map;
   }, [data]);
 
+  const salaryByMonth = useMemo(() => {
+    const map = {};
+    (data?.salaryEntries || []).forEach((item) => {
+      if (!item?.date) return;
+      const d = new Date(item.date + "T00:00:00");
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (!map[key]) map[key] = [];
+      map[key].push({ id: item.id, name: formatDateID(item.date), amount: item.amount });
+    });
+    return map;
+  }, [data]);
+
+  const overtimeAmountByMonth = useMemo(() => {
+    const map = {};
+    if (Array.isArray(data?.overtimeEntries)) {
+      data.overtimeEntries.forEach((item) => {
+        if (!item || !item.paid) return;
+        const target = item.targetMonth || (item.date ? item.date.slice(0, 7) : todayKey().slice(0, 7));
+        const [y, m] = target.split("-").map(Number);
+        const key = `${y}-${m - 1}`;
+        const { amount } = computeOvertime(data.overtimeRate || 0, item.jenis, item.totalJam || 0);
+        map[key] = (map[key] || 0) + amount;
+      });
+    }
+    return map;
+  }, [data]);
+
   const routineByMonth = useMemo(() => {
     const map = {};
-    const activeY = Number(data?.activeYear || new Date().getFullYear());
     if (Array.isArray(data?.routineEntries)) {
       data.routineEntries.forEach((item) => {
         if (!item) return;
-        const itemYear = Number(item.activeYear || activeY);
-        if (itemYear !== activeY) return;
-
         const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
         const stopIdx = item.stopIndex !== undefined ? Number(item.stopIndex) : 11;
 
         for (let mIdx = startIdx; mIdx <= stopIdx; mIdx++) {
-          const key = `${activeY}-${mIdx}`;
+          const key = `${item.activeYear}-${mIdx}`;
           if (!map[key]) map[key] = [];
           map[key].push({
             id: item.id,
@@ -675,7 +865,6 @@ export default function AgrLedgerApp() {
     }
 
     const yearMonths = allBudgetYears[yearKey].months;
-    const resolvedGajiList = getResolvedGajiForYear(yearKey, allBudgetYears);
 
     MONTHS.forEach((m, idx) => {
       const spaylaterList = spaylaterByMonth[`${yearKey}-${idx}`] || [];
@@ -686,6 +875,8 @@ export default function AgrLedgerApp() {
 
       const incList = gajiTambahanByMonth[`${yearKey}-${idx}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
+
+      const totalLemburBulanIni = overtimeAmountByMonth[`${yearKey}-${idx}`] || 0;
 
       let totalRutinOtomatis = 0;
       if (Array.isArray(data?.routineEntries)) {
@@ -701,42 +892,28 @@ export default function AgrLedgerApp() {
         });
       }
 
+      const salList = salaryByMonth[`${yearKey}-${idx}`] || [];
+      const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
+      
+      let finalGaji = 0;
+      if (rawGajiKotor > 0) {
+        finalGaji = Math.max(0, rawGajiKotor - totalLemburBulanIni);
+      } else {
+        finalGaji = yearMonths[m]?.gaji || 0;
+      }
+
       const mRow = { 
         ...yearMonths[m], 
-        gaji: resolvedGajiList[idx],
+        gaji: finalGaji,
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
-        gajiTambahan: totalGajiTambahanOtomatis,
+        gajiTambahan: totalGajiTambahanOtomatis + totalLemburBulanIni,
         rutin: totalRutinOtomatis,
       };
       runningBal = computeAkhir(mRow, runningBal);
     });
 
     return runningBal;
-  }
-
-  function getResolvedGajiForYear(yearKey, allBudgetYears) {
-    if (!allBudgetYears[yearKey]) return Array(12).fill(0);
-    const yearMonths = allBudgetYears[yearKey].months;
-    const rawGaji = MONTHS.map((m) => yearMonths[m].gaji || 0);
-
-    const sortedExistingYears = Object.keys(allBudgetYears).map(Number).sort((a, b) => a - b);
-    const currIdx = sortedExistingYears.indexOf(Number(yearKey));
-
-    let inheritedBase = 0;
-    if (currIdx > 0) {
-      const prevYearKey = String(sortedExistingYears[currIdx - 1]);
-      const prevResolvedGaji = getResolvedGajiForYear(prevYearKey, allBudgetYears);
-      inheritedBase = prevResolvedGaji[prevResolvedGaji.length - 1];
-    }
-
-    const resolved = [];
-    let currentVal = inheritedBase;
-    for (let i = 0; i < 12; i++) {
-      if (rawGaji[i] > 0) currentVal = rawGaji[i];
-      resolved.push(currentVal);
-    }
-    return resolved;
   }
 
   function addBudgetYear() {
@@ -803,27 +980,76 @@ export default function AgrLedgerApp() {
   }
 
   function addRoutineEntry({ name, amount, startIndex }) {
-    setData((prev) => ({
-      ...prev,
-      routineEntries: [
-        { id: crypto.randomUUID(), name, amount: Number(amount), activeYear: prev.activeYear, startIndex: Number(startIndex), stopIndex: 11 },
-        ...(prev.routineEntries || []),
-      ],
-    }));
+    setData((prev) => {
+      const activeY = Number(prev.activeYear);
+      const sortedYears = Object.keys(prev.budgetYears).map(Number).sort((a, b) => a - b);
+      const targetYears = sortedYears.filter(y => y >= activeY);
+      
+      const newEntries = [];
+      targetYears.forEach(y => {
+        newEntries.push({
+          id: crypto.randomUUID(),
+          name,
+          amount: Number(amount),
+          activeYear: y,
+          startIndex: y === activeY ? Number(startIndex) : 0,
+          stopIndex: 11
+        });
+      });
+
+      return {
+        ...prev,
+        routineEntries: [
+          ...newEntries,
+          ...(prev.routineEntries || []),
+        ],
+      };
+    });
   }
 
   function updateRoutineEntry(id, updatedData) {
-    setData((prev) => ({
-      ...prev,
-      routineEntries: prev.routineEntries.map((e) => (e.id === id ? { ...e, ...updatedData } : e)),
-    }));
+    setData((prev) => {
+      const targetEntry = prev.routineEntries.find(e => e.id === id);
+      if (!targetEntry) return prev;
+      
+      const currentActiveYear = Number(targetEntry.activeYear);
+      const isStopping = updatedData.stopIndex !== undefined;
+
+      const newEntries = prev.routineEntries.map((e) => {
+        if (e.id === id) {
+          return { ...e, ...updatedData };
+        }
+        if (!isStopping && e.name === targetEntry.name && Number(e.activeYear) > currentActiveYear) {
+          return { 
+            ...e, 
+            name: updatedData.name !== undefined ? updatedData.name : e.name, 
+            amount: updatedData.amount !== undefined ? updatedData.amount : e.amount 
+          };
+        }
+        return e;
+      });
+
+      let finalEntries = newEntries;
+      if (isStopping && updatedData.stopIndex < 11) {
+        finalEntries = finalEntries.filter(e => !(e.name === targetEntry.name && Number(e.activeYear) > currentActiveYear));
+      }
+
+      return { ...prev, routineEntries: finalEntries };
+    });
   }
 
   function deleteRoutineEntry(id) {
-    setData((prev) => ({
-      ...prev,
-      routineEntries: prev.routineEntries.filter((e) => e.id !== id),
-    }));
+    setData((prev) => {
+      const targetEntry = prev.routineEntries.find(e => e.id === id);
+      if (!targetEntry) return prev;
+      
+      return {
+        ...prev,
+        routineEntries: prev.routineEntries.filter((e) => 
+          !(e.id === id || (e.name === targetEntry.name && Number(e.activeYear) > Number(targetEntry.activeYear)))
+        ),
+      };
+    });
   }
 
   const wishlistTotal = useMemo(() => {
@@ -845,15 +1071,6 @@ export default function AgrLedgerApp() {
     }));
   }
 
-  function addWishlistItem(catId, { name, price }) {
-    setData((prev) => ({
-      ...prev,
-      wishlistCategories: prev.wishlistCategories.map((c) =>
-        c.id === catId ? { ...c, items: [...c.items, { id: crypto.randomUUID(), name, price, bought: false }] } : c
-      ),
-    }));
-  }
-
   function toggleWishlistBought(catId, itemId) {
     setData((prev) => ({
       ...prev,
@@ -872,7 +1089,7 @@ export default function AgrLedgerApp() {
     }));
   }
 
-  function addSpaylater({ name, totalAmount, tenor, purchaseDate }) {
+  function addSpaylater({ name, totalAmount, tenor, purchaseDate, walletId }) {
     setData((prev) => ({
       ...prev,
       spaylater: [
@@ -882,6 +1099,7 @@ export default function AgrLedgerApp() {
           totalAmount: Number(totalAmount),
           tenor: Number(tenor),
           purchaseDate,
+          walletId,
           monthlyPayment: Math.round(Number(totalAmount) / Number(tenor)),
           isFinished: false,
           paidChecklist: Array(Number(tenor)).fill(false),
@@ -892,38 +1110,77 @@ export default function AgrLedgerApp() {
   }
 
   function toggleSpaylaterPaid(id, index) {
-    setData((prev) => ({
-      ...prev,
-      spaylater: prev.spaylater.map((item) => {
-        if (item.id !== id) return item;
-        const isPaid = item.paidChecklist[index];
-        const newChecklist = item.paidChecklist.map((v, i) => isPaid ? (i >= index ? false : v) : (i <= index ? true : v));
-        const allPaid = newChecklist.every(Boolean);
-        return { ...item, paidChecklist: newChecklist, isFinished: allPaid };
-      }),
-    }));
+    setData((prev) => {
+      const item = prev.spaylater.find((s) => s.id === id);
+      if (!item) return prev;
+
+      const isPaid = item.paidChecklist[index];
+      const newChecklist = item.paidChecklist.map((v, i) => isPaid ? (i >= index ? false : v) : (i <= index ? true : v));
+      const allPaid = newChecklist.every(Boolean);
+
+      let delta = 0;
+      newChecklist.forEach((v, i) => {
+        const old = item.paidChecklist[i];
+        if (v && !old) delta += item.monthlyPayment;
+        if (!v && old) delta -= item.monthlyPayment;
+      });
+
+      const wallets = item.walletId
+        ? prev.wallets.map((w) => w.id === item.walletId ? { ...w, balance: w.balance - delta } : w)
+        : prev.wallets;
+
+      return {
+        ...prev,
+        spaylater: prev.spaylater.map((s) => s.id === id ? { ...s, paidChecklist: newChecklist, isFinished: allPaid } : s),
+        wallets,
+      };
+    });
   }
 
   function toggleSpaylaterFinished(id) {
-    setData((prev) => ({
-      ...prev,
-      spaylater: prev.spaylater.map((item) => {
-        if (item.id !== id) return item;
-        const nextFinished = !item.isFinished;
-        return {
-          ...item,
-          isFinished: nextFinished,
-          paidChecklist: nextFinished ? Array(item.tenor).fill(true) : item.paidChecklist,
-        };
-      }),
-    }));
+    setData((prev) => {
+      const item = prev.spaylater.find((s) => s.id === id);
+      if (!item) return prev;
+
+      const nextFinished = !item.isFinished;
+      const newChecklist = nextFinished ? Array(item.tenor).fill(true) : item.paidChecklist;
+
+      let delta = 0;
+      newChecklist.forEach((v, i) => {
+        const old = item.paidChecklist[i];
+        if (v && !old) delta += item.monthlyPayment;
+      });
+
+      const wallets = item.walletId && delta > 0
+        ? prev.wallets.map((w) => w.id === item.walletId ? { ...w, balance: w.balance - delta } : w)
+        : prev.wallets;
+
+      return {
+        ...prev,
+        spaylater: prev.spaylater.map((s) => s.id === id ? { ...s, isFinished: nextFinished, paidChecklist: newChecklist } : s),
+        wallets,
+      };
+    });
   }
 
   function deleteSpaylater(id) {
-    setData((prev) => ({
-      ...prev,
-      spaylater: prev.spaylater.filter((s) => s.id !== id),
-    }));
+    setData((prev) => {
+      const item = prev.spaylater.find((s) => s.id === id);
+      if (!item) return prev;
+
+      const paidCount = item.paidChecklist.filter(Boolean).length;
+      const refund = paidCount * item.monthlyPayment;
+
+      const wallets = item.walletId && refund > 0
+        ? prev.wallets.map((w) => w.id === item.walletId ? { ...w, balance: w.balance + refund } : w)
+        : prev.wallets;
+
+      return {
+        ...prev,
+        spaylater: prev.spaylater.filter((s) => s.id !== id),
+        wallets,
+      };
+    });
   }
 
   function updateOvertimeRate(v) {
@@ -983,6 +1240,45 @@ export default function AgrLedgerApp() {
         );
       }
       return next;
+    });
+  }
+
+  function addSalaryEntry({ amount, date, walletId }) {
+    if (!date || !amount || !walletId) return;
+    setData((prev) => ({
+      ...prev,
+      salaryEntries: [
+        { id: crypto.randomUUID(), amount: Number(amount) || 0, date, walletId },
+        ...(prev.salaryEntries || []),
+      ],
+      wallets: prev.wallets.map((w) =>
+        w.id === walletId ? { ...w, balance: w.balance + (Number(amount) || 0) } : w
+      ),
+    }));
+  }
+
+  function deleteSalaryEntry(id) {
+    setData((prev) => {
+      const entry = (prev.salaryEntries || []).find((e) => e.id === id);
+      if (!entry) return prev;
+      return {
+        ...prev,
+        salaryEntries: prev.salaryEntries.filter((e) => e.id !== id),
+        wallets: prev.wallets.map((w) =>
+          w.id === entry.walletId ? { ...w, balance: w.balance - entry.amount } : w
+        ),
+      };
+    });
+  }
+
+  function clearAllSalaryEntries() {
+    setData((prev) => {
+      const wallets = prev.wallets.map((w) => ({ ...w }));
+      (prev.salaryEntries || []).forEach((entry) => {
+        const w = wallets.find((w) => w.id === entry.walletId);
+        if (w) w.balance -= entry.amount;
+      });
+      return { ...prev, salaryEntries: [], wallets };
     });
   }
 
@@ -1060,7 +1356,12 @@ export default function AgrLedgerApp() {
   function deleteWallet(id) {
     setData((prev) => {
       if (prev.wallets.length <= 1) return prev;
-      return { ...prev, wallets: prev.wallets.filter((w) => w.id !== id) };
+      const remaining = prev.wallets.filter((w) => w.id !== id);
+      return {
+        ...prev,
+        wallets: remaining,
+        primaryWalletId: prev.primaryWalletId === id ? remaining[0]?.id : prev.primaryWalletId,
+      };
     });
   }
 
@@ -1101,7 +1402,6 @@ export default function AgrLedgerApp() {
     }
 
     const rawMonths = data.budgetYears[currentYearStr].months;
-    const resolvedGajiList = getResolvedGajiForYear(currentYearStr, data.budgetYears);
     const computedMonths = {};
     let runningBalance = baseJanSaldo;
 
@@ -1115,15 +1415,27 @@ export default function AgrLedgerApp() {
       const incList = gajiTambahanByMonth[`${currentYearStr}-${index}`] || [];
       const totalGajiTambahanOtomatis = incList.reduce((s, i) => s + i.amount, 0);
 
+      const totalLemburBulanIni = overtimeAmountByMonth[`${currentYearStr}-${index}`] || 0;
+
       const rutList = routineByMonth[`${currentYearStr}-${index}`] || [];
       const totalRutinOtomatis = rutList.reduce((s, i) => s + i.amount, 0);
 
+      const salList = salaryByMonth[`${currentYearStr}-${index}`] || [];
+      const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
+
+      let finalGaji = 0;
+      if (rawGajiKotor > 0) {
+        finalGaji = Math.max(0, rawGajiKotor - totalLemburBulanIni);
+      } else {
+        finalGaji = rawMonths[m]?.gaji || 0;
+      }
+
       const row = {
         ...(rawMonths[m] || { saldoAwal: 0, keterangan: "" }),
-        gaji: resolvedGajiList[index],
+        gaji: finalGaji,
         cicilan: totalCicilanOtomatis,
         pengeluaran: totalPengeluaranOtomatis,
-        gajiTambahan: totalGajiTambahanOtomatis,
+        gajiTambahan: totalGajiTambahanOtomatis + totalLemburBulanIni,
         rutin: totalRutinOtomatis,
       };
       
@@ -1139,7 +1451,7 @@ export default function AgrLedgerApp() {
     });
 
     return computedMonths;
-  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth]);
+  }, [data, spaylaterByMonth, pengeluaranByMonth, gajiTambahanByMonth, routineByMonth, overtimeAmountByMonth, salaryByMonth]);
 
   const budgetTrendData = useMemo(() => {
     if (!resolvedMonthsData) return [];
@@ -1187,6 +1499,52 @@ export default function AgrLedgerApp() {
       });
   }, [data]);
 
+  const activeSpaylaterList = useMemo(() => {
+    let list = [...(data?.spaylater?.filter(item => !item.isFinished) || [])];
+
+    if (spaySearch) {
+      list = list.filter(item => item.name.toLowerCase().includes(spaySearch.toLowerCase()));
+    }
+
+    list.sort((a, b) => {
+      if (spaySort === "name_asc") return a.name.localeCompare(b.name);
+      if (spaySort === "name_desc") return b.name.localeCompare(a.name);
+      if (spaySort === "price_desc") return b.totalAmount - a.totalAmount;
+      if (spaySort === "price_asc") return a.totalAmount - b.totalAmount;
+      if (spaySort === "tenor_desc") return b.tenor - a.tenor;
+      if (spaySort === "tenor_asc") return a.tenor - b.tenor;
+      return 0;
+    });
+
+    return list;
+  }, [data?.spaylater, spaySearch, spaySort]);
+
+  const sortedFilteredTasks = useMemo(() => {
+    if (!data || !Array.isArray(data.tasks)) return [];
+    let list = [...data.tasks];
+    if (taskFilter === "active") list = list.filter((t) => !t.done);
+    if (taskFilter === "done") list = list.filter((t) => t.done);
+
+    const priorityRank = { high: 0, medium: 1, low: 2 };
+    list.sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+      if (a.dueDate && !b.dueDate) return -1;
+      if (!a.dueDate && b.dueDate) return 1;
+      return priorityRank[a.priority] - priorityRank[b.priority];
+    });
+    return list;
+  }, [data, taskFilter]);
+
+  const taskStats = useMemo(() => {
+    if (!data || !Array.isArray(data.tasks)) return { total: 0, done: 0, overdue: 0 };
+    const today = todayKey();
+    const total = data.tasks.length;
+    const done = data.tasks.filter((t) => t.done).length;
+    const overdue = data.tasks.filter((t) => !t.done && t.dueDate && t.dueDate < today).length;
+    return { total, done, overdue };
+  }, [data]);
+
   if (!loaded || !data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-ink">
@@ -1199,13 +1557,16 @@ export default function AgrLedgerApp() {
   const currentYearRoutineEntries = (data.routineEntries || []).filter(e => Number(e.activeYear || data.activeYear) === Number(data.activeYear));
 
   return (
-    <div className="min-h-screen bg-ink text-white font-display" onClick={() => { if (activePopup) setActivePopup(null); }}>
+    <div
+      className="min-h-screen bg-ink text-white font-display"
+      onClick={() => { if (activePopup) setActivePopup(null); }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
         .font-display { font-family: system-ui, -apple-system, sans-serif; }
         .tabular { font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace; letter-spacing: -0.02em; }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .bg-ink { background: #0C0D0F; }
         .bg-surface { background: #141518; }
         .text-lime { color: #C8FF4D; }
@@ -1219,6 +1580,15 @@ export default function AgrLedgerApp() {
         .cta-shadow { box-shadow: 0 8px 30px -8px rgba(200,255,77,0.5); }
         input[type=checkbox].accent-lime { accent-color: #C8FF4D; }
         input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
+        select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
+
+        @keyframes tabFadeSlide {
+          from { opacity: 0; transform: translateX(8px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        .tab-content {
+          animation: tabFadeSlide 0.25s ease-out;
+        }
       `}</style>
 
       <div className="w-full max-w-md md:max-w-5xl mx-auto px-5 md:px-8 pt-7 pb-32">
@@ -1246,123 +1616,159 @@ export default function AgrLedgerApp() {
 
         <TopTabs active={activeTab} onChange={setActiveTab} />
 
-        {activeTab === "home" && (
-          <>
-            <div className="relative mb-8 md:max-w-md">
-              <Search size={14} className="absolute left-0 top-1/2 -translate-y-1/2 text-white/25" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Cari transaksi"
-                className="w-full bg-transparent border-b border-white/10 pl-6 pr-2 py-2 text-sm outline-none focus:border-lime placeholder:text-white/25 transition-colors"
-              />
-            </div>
+        <div key={activeTab} className="tab-content">
+          {activeTab === "home" && (
+            <>
+              <div className="relative mb-8 md:max-w-md">
+                <Search size={14} className="absolute left-0 top-1/2 -translate-y-1/2 text-white/25" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Cari transaksi"
+                  className="w-full bg-transparent border-b border-white/10 pl-6 pr-2 py-2 text-sm outline-none focus:border-lime placeholder:text-white/25 transition-colors"
+                />
+              </div>
 
-            <div className="md:grid md:grid-cols-2 md:gap-x-14">
-              <div>
-                <div className="flex items-center gap-6 mb-9">
-                  <div className="relative w-28 h-28 shrink-0">
-                    <svg viewBox="0 0 120 120" className="w-28 h-28 -rotate-90">
-                      <circle cx="60" cy="60" r="52" fill="none" stroke="#ffffff0F" strokeWidth="10" />
-                      <circle
-                        cx="60"
-                        cy="60"
-                        r="52"
-                        fill="none"
-                        stroke="#C8FF4D"
-                        strokeWidth="10"
-                        strokeLinecap="round"
-                        strokeDasharray={2 * Math.PI * 52}
-                        strokeDashoffset={2 * Math.PI * 52 * (1 - Math.min(1, remainingMonth / Math.max(1, data.monthlyBudget)))}
-                        style={{ transition: "stroke-dashoffset 0.5s ease" }}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <Sparkles size={13} className="text-lime mb-1" />
-                      <div className="text-[10px] text-white/40 uppercase tracking-wider">Sisa</div>
-                    </div>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="text-[11px] uppercase tracking-wider text-white/35 font-medium">Budget bulanan tersisa</div>
-                      {!isEditingMonthlyBudget ? (
-                        <button onClick={() => { setIsEditingMonthlyBudget(true); setTempMonthlyBudget(formatRupiahInput(data.monthlyBudget)); }} className="text-[10px] text-lime hover:underline flex items-center gap-1">
-                          <Edit2 size={10} /> Ubah
-                        </button>
-                      ) : null}
-                    </div>
-
-                    {!isEditingMonthlyBudget ? (
-                      <div className="font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate">
-                        {rupiah(remainingMonth)}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 mb-2">
-                        <input
-                          autoFocus
-                          type="text"
-                          inputMode="numeric"
-                          value={tempMonthlyBudget}
-                          onChange={(e) => setTempMonthlyBudget(formatRupiahInput(e.target.value))}
-                          className="w-full bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular"
+              <div className="md:grid md:grid-cols-2 md:gap-x-14">
+                <div>
+                  <div className="flex items-center gap-6 mb-9">
+                    <div className="relative w-28 h-28 shrink-0">
+                      <svg viewBox="0 0 120 120" className="w-28 h-28 -rotate-90">
+                        <circle cx="60" cy="60" r="52" fill="none" stroke="#ffffff0F" strokeWidth="10" />
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="52"
+                          fill="none"
+                          stroke="#C8FF4D"
+                          strokeWidth="10"
+                          strokeLinecap="round"
+                          strokeDasharray={2 * Math.PI * 52}
+                          strokeDashoffset={2 * Math.PI * 52 * (1 - Math.min(1, remainingMonth / Math.max(1, data.monthlyBudget)))}
+                          style={{ transition: "stroke-dashoffset 0.5s ease" }}
                         />
-                        <button onClick={() => {
-                          const val = parseRupiahInput(tempMonthlyBudget);
-                          if (val > 0) setData((prev) => ({ ...prev, monthlyBudget: val }));
-                          setIsEditingMonthlyBudget(false);
-                        }} className="text-lime hover:scale-110 bg-lime/10 p-1.5 rounded"><Check size={14} /></button>
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <Sparkles size={13} className="text-lime mb-1" />
+                        <div className="text-[10px] text-white/40 uppercase tracking-wider">Sisa</div>
                       </div>
-                    )}
-
-                    <div className="text-[11px] text-white/40 mb-3">
-                      Total Limit: <span className="text-white font-medium tabular">{rupiah(data.monthlyBudget)}</span>
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="text-[11px] uppercase tracking-wider text-white/35 font-medium">Budget bulanan tersisa</div>
+                        {!isEditingMonthlyBudget ? (
+                          <button onClick={() => { setIsEditingMonthlyBudget(true); setTempMonthlyBudget(formatRupiahInput(data.monthlyBudget)); }} className="text-[10px] text-lime hover:underline flex items-center gap-1">
+                            <Edit2 size={10} /> Ubah
+                          </button>
+                        ) : null}
+                      </div>
 
-                    <div className="flex gap-4">
+                      {!isEditingMonthlyBudget ? (
+                        <div className="font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate">
+                          {rupiah(remainingMonth)}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 mb-2">
+                          <input
+                            autoFocus
+                            type="text"
+                            inputMode="numeric"
+                            value={tempMonthlyBudget}
+                            onChange={(e) => setTempMonthlyBudget(formatRupiahInput(e.target.value))}
+                            className="w-full bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular"
+                          />
+                          <button onClick={() => {
+                            const val = parseRupiahInput(tempMonthlyBudget);
+                            if (val > 0) setData((prev) => ({ ...prev, monthlyBudget: val }));
+                            setIsEditingMonthlyBudget(false);
+                          }} className="text-lime hover:scale-110 bg-lime/10 p-1.5 rounded"><Check size={14} /></button>
+                        </div>
+                      )}
+
+                      <div className="text-[11px] text-white/40 mb-3">
+                        Total Limit: <span className="text-white font-medium tabular">{rupiah(data.monthlyBudget)}</span>
+                      </div>
+
+                      <div className="flex gap-4">
+                        <div>
+                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
+                          <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
+                          <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
+                        </div>
+                      </div>
+
+                      <button onClick={() => setShowSalaryHistory(true)} className="mt-3 text-[10px] text-lime hover:underline flex items-center gap-1">
+                        <History size={10} /> Riwayat Gaji Kotor
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mb-9 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
+                    <div className="flex items-center justify-between mb-4">
                       <div>
-                        <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
-                        <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
+                        <div className="text-sm font-semibold">Aktivitas Bulan Ini</div>
+                        <div className="text-[11px] text-white/40 uppercase tracking-wider mt-0.5">{MONTHS[calendarDate.getMonth()]} {calendarDate.getFullYear()}</div>
                       </div>
-                      <div>
-                        <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
-                        <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={handlePrevMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronLeft size={15} /></button>
+                        <button onClick={() => setCalendarDate(new Date())} className="text-[10px] text-lime font-medium px-2.5 py-1 rounded-lg bg-lime/10 hover:bg-lime/20 transition">Hari Ini</button>
+                        <button onClick={handleNextMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronRight size={15} /></button>
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                <div className="mb-9 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <div className="text-sm font-semibold">Aktivitas Bulan Ini</div>
-                      <div className="text-[11px] text-white/40 uppercase tracking-wider mt-0.5">{MONTHS[calendarDate.getMonth()]} {calendarDate.getFullYear()}</div>
+                    <div className="grid grid-cols-7 gap-1.5 mb-1.5 text-center text-[10px] text-white/40 font-medium uppercase">
+                      <div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div className="text-coral">Min</div>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={handlePrevMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronLeft size={15} /></button>
-                      <button onClick={() => setCalendarDate(new Date())} className="text-[10px] text-lime font-medium px-2.5 py-1 rounded-lg bg-lime/10 hover:bg-lime/20 transition">Hari Ini</button>
-                      <button onClick={handleNextMonth} className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/75 transition"><ChevronRight size={15} /></button>
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-7 gap-1.5 mb-1.5 text-center text-[10px] text-white/40 font-medium uppercase">
-                    <div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div className="text-coral">Min</div>
-                  </div>
+                    <div className="grid grid-cols-7 gap-1.5">
+                      {calendarGridData.map((item) => {
+                        if (item.empty) return <div key={item.id} className="h-16 md:h-20 rounded-xl bg-transparent" />;
+                        const isToday = item.iso === todayKey();
+                        const hasExpense = item.expense > 0;
+                        const hasIncome = item.income > 0;
 
-                  <div className="grid grid-cols-7 gap-1.5">
-                    {calendarGridData.map((item) => {
-                      if (item.empty) return <div key={item.id} className="h-16 md:h-20 rounded-xl bg-transparent" />;
-                      const isToday = item.iso === todayKey();
-                      const hasExpense = item.expense > 0;
-                      const hasIncome = item.income > 0;
-
-                      return (
-                        <div key={item.iso} className={`h-16 md:h-20 rounded-xl p-1.5 flex flex-col justify-between transition border ${isToday ? "border-lime bg-white/[0.06]" : item.isHoliday ? "border-white/5 bg-coral/[0.08]" : "border-white/5 bg-white/[0.02]"}`}>
-                          <div className="flex items-center justify-between">
-                            <span className={`text-[11px] font-medium ${isToday ? "text-lime font-bold" : item.isHoliday ? "text-coral font-bold" : "text-white/60"}`}>{item.dateNum}</span>
+                        return (
+                          <div key={item.iso} className={`h-16 md:h-20 rounded-xl p-1.5 flex flex-col justify-between transition border ${isToday ? "border-lime bg-white/[0.06]" : item.isHoliday ? "border-white/5 bg-coral/[0.08]" : "border-white/5 bg-white/[0.02]"}`}>
+                            <div className="flex items-center justify-between">
+                              <span className={`text-[11px] font-medium ${isToday ? "text-lime font-bold" : item.isHoliday ? "text-coral font-bold" : "text-white/60"}`}>{item.dateNum}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5 text-right overflow-hidden">
+                              {hasIncome && <span className="text-[9.5px] text-teal font-medium tabular truncate">+{item.income >= 1000000 ? (item.income / 1000000).toFixed(1) + "JT" : Math.round(item.income / 1000) + "RB"}</span>}
+                              {hasExpense && <span className="text-[9.5px] text-coral font-medium tabular truncate">-{item.expense >= 1000000 ? (item.expense / 1000000).toFixed(1) + "JT" : Math.round(item.expense / 1000) + "RB"}</span>}
+                            </div>
                           </div>
-                          <div className="flex flex-col gap-0.5 text-right overflow-hidden">
-                            {hasIncome && <span className="text-[9.5px] text-teal font-medium tabular truncate">+{item.income >= 1000000 ? (item.income / 1000000).toFixed(1) + "JT" : Math.round(item.income / 1000) + "RB"}</span>}
-                            {hasExpense && <span className="text-[9.5px] text-coral font-medium tabular truncate">-{item.expense >= 1000000 ? (item.expense / 1000000).toFixed(1) + "JT" : Math.round(item.expense / 1000) + "RB"}</span>}
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between mb-3">
+                    <SectionLabel noMargin>Target Tabungan</SectionLabel>
+                    <button onClick={() => setShowAddGoal(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-2.5 py-1 flex items-center gap-1 hover:bg-lime/5 transition"><Plus size={12} /> Tambah Target</button>
+                  </div>
+                  <div className="mb-9 space-y-4">
+                    {(!data.goals || data.goals.length === 0) && <EmptyRow>Belum ada target tabungan.</EmptyRow>}
+                    {data.goals?.map((goal) => {
+                      if (editingGoalId === goal.id) {
+                        return <EditGoalCard key={goal.id} goal={goal} onSave={(updated) => updateGoal(goal.id, updated)} onCancel={() => setEditingGoalId(null)} />;
+                      }
+                      return (
+                        <div key={goal.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
+                          <div className="flex items-center gap-2.5 mb-2">
+                            <PiggyBank size={15} className="text-lime shrink-0" />
+                            <div className="text-sm font-medium truncate flex-1">{goal.name}</div>
+                            <div className="text-[11px] text-white/40 tabular shrink-0">{rupiah(goal.saved)} / {rupiah(goal.target)}</div>
+                            <div className="flex items-center gap-1 ml-2">
+                              <button onClick={() => setTopUpGoal(goal)} className="text-black bg-lime hover:scale-105 p-1 rounded transition mr-1" title="Tambah tabungan"><Plus size={13} strokeWidth={2.5} /></button>
+                              <button onClick={() => setEditingGoalId(goal.id)} className="text-white/30 hover:text-white p-1 transition"><Edit2 size={13} /></button>
+                              <button onClick={() => requestConfirm("Hapus Target?", `Target "${goal.name}" akan dihapus.`, () => deleteGoal(goal.id))} className="text-white/30 hover:text-coral p-1 transition"><Trash2 size={13} /></button>
+                            </div>
+                          </div>
+                          <div className="h-[4px] bg-white/10 overflow-hidden rounded-full">
+                            <div className="h-full bg-lime transition-all rounded-full" style={{ width: `${Math.min(100, (goal.saved / Math.max(1, goal.target)) * 100)}%` }} />
                           </div>
                         </div>
                       );
@@ -1370,549 +1776,726 @@ export default function AgrLedgerApp() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between mb-3">
-                  <SectionLabel noMargin>Target Tabungan</SectionLabel>
-                  <button onClick={() => setShowAddGoal(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-2.5 py-1 flex items-center gap-1 hover:bg-lime/5 transition"><Plus size={12} /> Tambah Target</button>
-                </div>
-                <div className="mb-9 space-y-4">
-                  {(!data.goals || data.goals.length === 0) && <EmptyRow>Belum ada target tabungan.</EmptyRow>}
-                  {data.goals?.map((goal) => {
-                    if (editingGoalId === goal.id) {
-                      return <EditGoalCard key={goal.id} goal={goal} onSave={(updated) => updateGoal(goal.id, updated)} onCancel={() => setEditingGoalId(null)} />;
-                    }
-                    return (
-                      <div key={goal.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
-                        <div className="flex items-center gap-2.5 mb-2">
-                          <PiggyBank size={15} className="text-lime shrink-0" />
-                          <div className="text-sm font-medium truncate flex-1">{goal.name}</div>
-                          <div className="text-[11px] text-white/40 tabular shrink-0">{rupiah(goal.saved)} / {rupiah(goal.target)}</div>
-                          <div className="flex items-center gap-1 ml-2">
-                            <button onClick={() => setTopUpGoal(goal)} className="text-black bg-lime hover:scale-105 p-1 rounded transition mr-1" title="Tambah tabungan"><Plus size={13} strokeWidth={2.5} /></button>
-                            <button onClick={() => setEditingGoalId(goal.id)} className="text-white/30 hover:text-white p-1 transition"><Edit2 size={13} /></button>
-                            <button onClick={() => requestConfirm("Hapus Target?", `Target "${goal.name}" akan dihapus.`, () => deleteGoal(goal.id))} className="text-white/30 hover:text-coral p-1 transition"><Trash2 size={13} /></button>
-                          </div>
-                        </div>
-                        <div className="h-[4px] bg-white/10 overflow-hidden rounded-full">
-                          <div className="h-full bg-lime transition-all rounded-full" style={{ width: `${Math.min(100, (goal.saved / Math.max(1, goal.target)) * 100)}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <SectionLabel noMargin>Dompet</SectionLabel>
-                  <div className="text-[11px] text-white/35 tabular">{rupiah(totals.balance)} total</div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 mb-9">
-                  {data.wallets.map((w) => {
-                    const isEditing = editingWalletId === w.id;
-                    const canDeleteWallet = data.wallets.length > 1;
-                    return (
-                      <div key={w.id} className="pl-3 pr-2 py-3 border-l-2 bg-white/[0.03] rounded-r-xl flex flex-col justify-between group" style={{ borderColor: w.color }}>
-                        <div className="flex items-center justify-between mb-2">
-                          {isEditing ? (
-                            <div className="flex items-center gap-1 w-full">
-                              <input autoFocus value={editingWalletName} onChange={(e) => setEditingWalletName(e.target.value)} className="w-full bg-white/10 text-xs px-1.5 py-0.5 rounded outline-none text-white" />
-                              <button onClick={() => updateWalletName(w.id, editingWalletName)} className="text-lime hover:scale-110"><Check size={13} /></button>
-                            </div>
-                          ) : (
-                            <div onClick={() => { setEditingWalletId(w.id); setEditingWalletName(w.name); }} className="text-[11px] text-white/60 hover:text-white truncate cursor-pointer flex items-center gap-1 group/name">
-                              <span className="truncate">{w.name}</span>
-                              <Edit2 size={10} className="opacity-0 group-hover/name:opacity-100 transition shrink-0" />
-                            </div>
-                          )}
-                          {canDeleteWallet && (
-                            <button onClick={() => requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.`, () => deleteWallet(w.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"><Trash2 size={11} /></button>
-                          )}
-                        </div>
-                        <div className="font-medium text-sm tabular">{rupiah(w.balance)}</div>
-                      </div>
-                    );
-                  })}
-                  <button onClick={() => setShowAddWallet(true)} className="min-h-[72px] flex flex-col items-center justify-center gap-1 text-white/30 hover:text-white/60 transition border-2 border-dashed border-white/15 rounded-xl">
-                    <Plus size={15} />
-                    <span className="text-[10px]">Dompet Baru</span>
-                  </button>
-                </div>
-
-                <SectionLabel>Pengeluaran per kategori</SectionLabel>
-                <div className="mb-9">
-                  {categorySpend.filter((c) => c.total > 0).length === 0 && <EmptyRow>Belum ada pengeluaran tercatat.</EmptyRow>}
-                  {categorySpend.filter((c) => c.total > 0).map((c) => (
-                    <button key={c.id} onClick={() => setFilterCat((prev) => (prev === c.id ? "all" : c.id))} className={`w-full text-left py-2.5 border-b border-white/5 transition ${filterCat === c.id ? "opacity-100" : "opacity-90 hover:opacity-100"}`}>
-                      <div className="flex items-center justify-between text-sm mb-1.5">
-                        <span className="flex items-center gap-2">
-                          <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] shrink-0" style={{ backgroundColor: c.color + "26" }}>{c.emoji}</span>
-                          <span style={filterCat === c.id ? { color: c.color } : undefined}>{c.label}</span>
-                        </span>
-                        <span className="font-medium tabular text-sm">{rupiah(c.total)}</span>
-                      </div>
-                      <div className="h-[3px] bg-white/8 overflow-hidden rounded-full">
-                        <div className="h-full rounded-full transition-all" style={{ width: `${(c.total / maxCat) * 100}%`, backgroundColor: c.color, opacity: filterCat === "all" || filterCat === c.id ? 1 : 0.35 }} />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-3">
-                    <SectionLabel noMargin>{filterCat === "all" ? "Transaksi terbaru" : "Difilter"}</SectionLabel>
-                    {filterCat !== "all" && <button onClick={() => setFilterCat("all")} className="text-[11px] text-lime font-medium">Hapus filter</button>}
-                  </div>
-                  <button onClick={() => setTxEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition ${txEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
-                    <Edit2 size={12} /> {txEditListMode ? "Selesai Edit" : "Edit List"}
-                  </button>
-                </div>
                 <div>
-                  {filteredTransactions.length === 0 && <EmptyRow>Belum ada transaksi.</EmptyRow>}
-                  {filteredTransactions.slice(0, 20).map((t) => {
-                    const cat = CATEGORIES.find((c) => c.id === t.category);
-                    const isTransfer = t.type === "transfer";
-                    const fromW = data.wallets.find((w) => w.id === t.fromWalletId)?.name || "Dompet";
-                    const toW = data.wallets.find((w) => w.id === t.toWalletId)?.name || "Dompet";
+                  <div className="flex items-center justify-between mb-3">
+                    <SectionLabel noMargin>Dompet</SectionLabel>
+                    <div className="text-[11px] text-white/35 tabular">{rupiah(totals.balance)} total</div>
+                  </div>
 
-                    return (
-                      <div key={t.id} className="group flex items-center justify-between py-3 border-b border-white/5">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="text-base shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: isTransfer ? "#ffffff11" : t.type === "income" ? "#5EEAD733" : (cat?.color ? cat.color + "26" : "#ffffff11") }}>
-                            {isTransfer ? <ArrowRightLeft size={14} className="text-white/70" /> : t.type === "income" ? "💰" : (cat?.emoji || "✨")}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 mb-9">
+                    {data.wallets.map((w) => {
+                      const isEditing = editingWalletId === w.id;
+                      const isEditingBalance = editingBalanceId === w.id;
+                      const canDeleteWallet = data.wallets.length > 1;
+                      return (
+                        <div key={w.id} className="pl-3 pr-2 py-3 border-l-2 bg-white/[0.03] rounded-r-xl flex flex-col justify-between group" style={{ borderColor: w.color }}>
+                          <div className="flex items-center justify-between mb-2">
+                            {isEditing ? (
+                              <div className="flex items-center gap-1 w-full">
+                                <input autoFocus value={editingWalletName} onChange={(e) => setEditingWalletName(e.target.value)} className="w-full bg-white/10 text-xs px-1.5 py-0.5 rounded outline-none text-white" />
+                                <button onClick={() => updateWalletName(w.id, editingWalletName)} className="text-lime hover:scale-110"><Check size={13} /></button>
+                              </div>
+                            ) : (
+                              <div onClick={() => { setEditingWalletId(w.id); setEditingWalletName(w.name); }} className="text-[11px] text-white/60 hover:text-white truncate cursor-pointer flex items-center gap-1 group/name">
+                                {data.primaryWalletId === w.id && <Star size={10} className="text-lime shrink-0" fill="#C8FF4D" />}
+                                <span className="truncate">{w.name}</span>
+                                <Edit2 size={10} className="opacity-0 group-hover/name:opacity-100 transition shrink-0" />
+                              </div>
+                            )}
+                            <div className="flex items-center gap-1">
+                              {data.primaryWalletId !== w.id && (
+                                <button onClick={() => setPrimaryWallet(w.id)} className="text-white/0 group-hover:text-white/30 hover:text-lime transition p-0.5" title="Jadikan Dompet Utama">
+                                  <Star size={11} />
+                                </button>
+                              )}
+                              {canDeleteWallet && (
+                                <button onClick={() => requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.`, () => deleteWallet(w.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"><Trash2 size={11} /></button>
+                              )}
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{t.note || (isTransfer ? "Transfer Saldo" : t.type === "income" ? "Pemasukan" : cat?.label)}</div>
-                            <div className="text-[11px] text-white/35 truncate">{formatDateID(t.date)} • {isTransfer ? `${fromW} ➔ ${toW}` : t.type === "income" ? "Pemasukan" : cat?.label}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div className={`font-medium text-sm tabular ${isTransfer ? "text-white/60" : t.type === "income" ? "text-teal" : "text-white"}`}>
-                            {isTransfer ? "" : t.type === "income" ? "+" : "-"}{rupiah(t.amount)}
-                          </div>
-                          {txEditListMode && (
-                            <div className="flex items-center gap-1.5 ml-2">
-                              <button onClick={() => setEditingTx(t)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={13} /></button>
-                              <button onClick={() => requestConfirm("Hapus Transaksi?", "Transaksi akan dihapus permanen.", () => deleteTransaction(t.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={13} /></button>
+                          {isEditingBalance ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                autoFocus
+                                type="text"
+                                inputMode="numeric"
+                                value={editingBalanceValue}
+                                onChange={(e) => setEditingBalanceValue(formatRupiahInput(e.target.value))}
+                                className="w-full bg-white/10 text-sm px-1.5 py-0.5 rounded outline-none tabular text-lime font-medium"
+                              />
+                              <button onClick={() => { adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue)); setEditingBalanceId(null); }} className="text-lime hover:scale-110"><Check size={13} /></button>
+                            </div>
+                          ) : (
+                            <div onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }} className="font-medium text-sm tabular cursor-pointer hover:text-lime transition" title="Klik untuk ubah saldo">
+                              {rupiah(w.balance)}
                             </div>
                           )}
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
-        {activeTab === "budget" && (
-          <div>
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <SectionLabel noMargin>Tahun Anggaran</SectionLabel>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button onClick={addBudgetYear} className="px-3 py-1.5 rounded-lg text-[11px] border border-dashed border-white/30 text-lime hover:bg-lime/10 flex items-center gap-1 font-medium"><Plus size={12} /> Tahun Baru</button>
-                  {budgetYearsList.length > 1 && (
-                    <>
-                      {!isDeleteMode ? (
-                        <button onClick={() => { setIsDeleteMode(true); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] border border-white/20 text-white bg-white/[0.06] flex items-center gap-1.5 font-medium"><Trash2 size={12} /> Hapus Tahun</button>
-                      ) : (
-                        <div className="flex items-center gap-1.5">
-                          <button disabled={selectedYearsToDelete.length === 0} onClick={() => requestConfirm("Hapus Tahun?", "Tahun terpilih akan dihapus.", executeDeleteSelectedYears)} className="px-3 py-1.5 rounded-lg text-[11px] bg-coral text-black font-bold disabled:opacity-40">Hapus ({selectedYearsToDelete.length})</button>
-                          <button onClick={() => { setIsDeleteMode(false); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] bg-white/20 text-white font-medium">Batal</button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
-                {budgetYearsList.map((y) => {
-                  const isSelected = String(data.activeYear) === String(y);
-                  const isMarkedForDelete = selectedYearsToDelete.includes(y);
-                  return (
-                    <button key={y} onClick={() => { if (isDeleteMode) { setSelectedYearsToDelete(prev => isMarkedForDelete ? prev.filter(item => item !== y) : [...prev, y]); } else { setData((prev) => ({ ...prev, activeYear: y })); } }} className={`py-2 rounded-lg text-[11px] font-medium border transition flex items-center justify-center gap-1.5 ${isDeleteMode && isMarkedForDelete ? "bg-coral text-black border-coral font-bold" : isDeleteMode ? "bg-white/10 border-white/25 text-white" : isSelected ? "bg-lime text-black border-lime font-bold" : "border-white/10 text-white/70 bg-white/[0.03]"}`}>
-                      {y}
-                      {isDeleteMode && <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] ${isMarkedForDelete ? "bg-black text-coral font-bold" : "bg-white/20 text-white"}`}>{isMarkedForDelete ? "✓" : "+"}</span>}
+                      );
+                    })}
+                    <button onClick={() => setShowAddWallet(true)} className="min-h-[72px] flex flex-col items-center justify-center gap-1 text-white/30 hover:text-white/60 transition border-2 border-dashed border-white/15 rounded-xl">
+                      <Plus size={15} />
+                      <span className="text-[10px]">Dompet Baru</span>
                     </button>
-                  );
-                })}
+                  </div>
+
+                  <SectionLabel>Pengeluaran per kategori</SectionLabel>
+                  <div className="mb-9">
+                    {categorySpend.filter((c) => c.total > 0).length === 0 && <EmptyRow>Belum ada pengeluaran tercatat.</EmptyRow>}
+                    {categorySpend.filter((c) => c.total > 0).map((c) => (
+                      <button key={c.id} onClick={() => setFilterCat((prev) => (prev === c.id ? "all" : c.id))} className={`w-full text-left py-2.5 border-b border-white/5 transition ${filterCat === c.id ? "opacity-100" : "opacity-90 hover:opacity-100"}`}>
+                        <div className="flex items-center justify-between text-sm mb-1.5">
+                          <span className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] shrink-0" style={{ backgroundColor: c.color + "26" }}>{c.emoji}</span>
+                            <span style={filterCat === c.id ? { color: c.color } : undefined}>{c.label}</span>
+                          </span>
+                          <span className="font-medium tabular text-sm">{rupiah(c.total)}</span>
+                        </div>
+                        <div className="h-[3px] bg-white/8 overflow-hidden rounded-full">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${(c.total / maxCat) * 100}%`, backgroundColor: c.color, opacity: filterCat === "all" || filterCat === c.id ? 1 : 0.35 }} />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-3">
+                      <SectionLabel noMargin>{filterCat === "all" ? "Transaksi terbaru" : "Difilter"}</SectionLabel>
+                      {filterCat !== "all" && <button onClick={() => setFilterCat("all")} className="text-[11px] text-lime font-medium">Hapus filter</button>}
+                    </div>
+                    <button onClick={() => setTxEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition ${txEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
+                      <Edit2 size={12} /> {txEditListMode ? "Selesai Edit" : "Edit List"}
+                    </button>
+                  </div>
+                  <div>
+                    {filteredTransactions.length === 0 && <EmptyRow>Belum ada transaksi.</EmptyRow>}
+                    {filteredTransactions.slice(0, 20).map((t) => {
+                      const cat = CATEGORIES.find((c) => c.id === t.category);
+                      const isTransfer = t.type === "transfer";
+                      const fromW = data.wallets.find((w) => w.id === t.fromWalletId)?.name || "Dompet";
+                      const toW = data.wallets.find((w) => w.id === t.toWalletId)?.name || "Dompet";
+
+                      return (
+                        <div key={t.id} className="group flex items-center justify-between py-3 border-b border-white/5">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="text-base shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: isTransfer ? "#ffffff11" : t.type === "income" ? "#5EEAD733" : (cat?.color ? cat.color + "26" : "#ffffff11") }}>
+                              {isTransfer ? <ArrowRightLeft size={14} className="text-white/70" /> : t.type === "income" ? "💰" : (cat?.emoji || "✨")}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium truncate">{t.note || (isTransfer ? "Transfer Saldo" : t.type === "income" ? "Pemasukan" : cat?.label)}</div>
+                              <div className="text-[11px] text-white/35 truncate">{formatDateID(t.date)} • {isTransfer ? `${fromW} ➔ ${toW}` : t.type === "income" ? "Pemasukan" : cat?.label}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className={`font-medium text-sm tabular ${isTransfer ? "text-white/60" : t.type === "income" ? "text-teal" : "text-white"}`}>
+                              {isTransfer ? "" : t.type === "income" ? "+" : "-"}{rupiah(t.amount)}
+                            </div>
+                            {txEditListMode && (
+                              <div className="flex items-center gap-1.5 ml-2">
+                                <button onClick={() => setEditingTx(t)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={13} /></button>
+                                <button onClick={() => requestConfirm("Hapus Transaksi?", "Transaksi akan dihapus permanen.", () => deleteTransaction(t.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={13} /></button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
-            </div>
+            </>
+          )}
 
-            <div className="mb-8 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
-              <div className="text-sm font-semibold mb-1">Tren Saldo Akhir</div>
-              <div className="text-[11px] text-white/40 mb-4">Tahun {data.activeYear}</div>
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={budgetTrendData} margin={{ top: 5, right: 8, left: 12, bottom: 0 }}>
-                    <CartesianGrid stroke="#ffffff0d" vertical={false} />
-                    <XAxis dataKey="month" stroke="#ffffff35" fontSize={10} tickLine={false} axisLine={false} interval={0} />
-                    <YAxis hide domain={["auto", "auto"]} />
-                    <Tooltip cursor={{ stroke: "#ffffff20" }} contentStyle={{ background: "#1A1B1E", border: "1px solid #ffffff1a", borderRadius: 8, fontSize: 12 }} labelStyle={{ color: "#ffffff90" }} formatter={(v) => [rupiah(v), "Saldo Akhir"]} />
-                    <Line type="monotone" dataKey="saldo" stroke="#C8FF4D" strokeWidth={2} dot={{ r: 3, fill: "#C8FF4D", strokeWidth: 0 }} activeDot={{ r: 5 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto no-scrollbar -mx-5 px-5 md:mx-0 md:px-0 mb-10">
-              <table className="w-full text-xs min-w-[780px]">
-                <thead>
-                  <tr className="text-white/40 text-left border-b border-white/10">
-                    <th className="py-2 pr-3 font-normal">Bulan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Saldo Awal</th>
-                    <th className="py-2 pr-3 font-normal text-right">Gaji</th>
-                    <th className="py-2 pr-3 font-normal text-right">Gaji Tambahan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Rutin</th>
-                    <th className="py-2 pr-3 font-normal text-right">Cicilan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Pengeluaran</th>
-                    <th className="py-2 pr-3 font-normal">Keterangan</th>
-                    <th className="py-2 pr-3 font-normal text-right">Saldo Akhir</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resolvedMonthsData && MONTHS.map((m, index) => {
-                    const row = resolvedMonthsData[m];
-                    const isFirstMonth = index === 0;
-                    const currentYearStr = String(data.activeYear);
-                    const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
-                    const isFirstYear = sortedYears[0] === Number(currentYearStr);
-
+          {activeTab === "budget" && (
+            <div>
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <SectionLabel noMargin>Tahun Anggaran</SectionLabel>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={addBudgetYear} className="px-3 py-1.5 rounded-lg text-[11px] border border-dashed border-white/30 text-lime hover:bg-lime/10 flex items-center gap-1 font-medium"><Plus size={12} /> Tahun Baru</button>
+                    {budgetYearsList.length > 1 && (
+                      <>
+                        {!isDeleteMode ? (
+                          <button onClick={() => { setIsDeleteMode(true); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] border border-white/20 text-white bg-white/[0.06] flex items-center gap-1.5 font-medium"><Trash2 size={12} /> Hapus Tahun</button>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <button disabled={selectedYearsToDelete.length === 0} onClick={() => requestConfirm("Hapus Tahun?", "Tahun terpilih akan dihapus.", executeDeleteSelectedYears)} className="px-3 py-1.5 rounded-lg text-[11px] bg-coral text-black font-bold disabled:opacity-40">Hapus ({selectedYearsToDelete.length})</button>
+                            <button onClick={() => { setIsDeleteMode(false); setSelectedYearsToDelete([]); }} className="px-3 py-1.5 rounded-lg text-[11px] bg-white/20 text-white font-medium">Batal</button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
+                  {budgetYearsList.map((y) => {
+                    const isSelected = String(data.activeYear) === String(y);
+                    const isMarkedForDelete = selectedYearsToDelete.includes(y);
                     return (
-                      <tr key={m} className="border-b border-white/5">
-                        <td className="py-1.5 pr-3 whitespace-nowrap text-white/70">{m}</td>
-                        <td className="py-1.5 pr-3 text-right tabular text-white/70">
-                          {isFirstMonth && isFirstYear ? (
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={(data.budgetYears[currentYearStr].months[m].saldoAwal || 0) === 0 ? "" : (data.budgetYears[currentYearStr].months[m].saldoAwal || 0).toLocaleString("id-ID")}
-                              onChange={(e) => updateBudgetCell(data.activeYear, m, "saldoAwal", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
-                              placeholder="0"
-                              className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
-                            />
-                          ) : (
-                            <span className="py-0.5 block">{row.resolvedSaldoAwal.toLocaleString("id-ID")}</span>
-                          )}
-                        </td>
-
-                        {/* Gaji Pokok */}
-                        <td className="py-1.5 pr-3">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={(row.gaji || 0) === 0 ? "" : (row.gaji || 0).toLocaleString("id-ID")}
-                            onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
-                            placeholder="0"
-                            className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
-                          />
-                        </td>
-
-                        {/* Gaji Tambahan */}
-                        <td className="py-1.5 pr-3 text-right tabular text-teal">
-                          {row.gajiTambahan > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, gajiTambahanByMonth[`${data.activeYear}-${index}`] || [], "Gaji Tambahan")}
-                            >
-                              {row.gajiTambahan.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
-
-                        {/* Rutin */}
-                        <td className="py-1.5 pr-3 text-right tabular text-white/80">
-                          {row.rutin > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, routineByMonth[`${data.activeYear}-${index}`] || [], "Rutin")}
-                            >
-                              {row.rutin.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
-
-                        {/* Cicilan */}
-                        <td className="py-1.5 pr-3 text-right tabular text-white/80">
-                          {row.cicilan > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, spaylaterByMonth[`${data.activeYear}-${index}`] || [], "Cicilan")}
-                            >
-                              {row.cicilan.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
-
-                        {/* Pengeluaran */}
-                        <td className="py-1.5 pr-3 text-right tabular text-coral">
-                          {row.pengeluaran > 0 ? (
-                            <span 
-                              className="cursor-pointer border-b border-dotted border-coral/50 inline-block py-0.5"
-                              onClick={(e) => handleTogglePopup(e, m, pengeluaranByMonth[`${data.activeYear}-${index}`] || [], "Pengeluaran")}
-                            >
-                              {row.pengeluaran.toLocaleString("id-ID")}
-                            </span>
-                          ) : (
-                            <span>0</span>
-                          )}
-                        </td>
-
-                        <td className="py-1.5 pr-3">
-                          <input value={row.keterangan || ""} onChange={(e) => updateBudgetCell(data.activeYear, m, "keterangan", e.target.value)} placeholder="-" className="w-28 bg-transparent outline-none border-b border-transparent focus:border-lime py-0.5" />
-                        </td>
-                        <td className={`py-1.5 pr-3 text-right tabular font-medium ${row.resolvedSaldoAkhir < 0 ? "text-coral" : "text-lime"}`}>
-                          {rupiah(row.resolvedSaldoAkhir)}
-                        </td>
-                      </tr>
+                      <button key={y} onClick={() => { if (isDeleteMode) { setSelectedYearsToDelete(prev => isMarkedForDelete ? prev.filter(item => item !== y) : [...prev, y]); } else { setData((prev) => ({ ...prev, activeYear: y })); } }} className={`py-2 rounded-lg text-[11px] font-medium border transition flex items-center justify-center gap-1.5 ${isDeleteMode && isMarkedForDelete ? "bg-coral text-black border-coral font-bold" : isDeleteMode ? "bg-white/10 border-white/25 text-white" : isSelected ? "bg-lime text-black border-lime font-bold" : "border-white/10 text-white/70 bg-white/[0.03]"}`}>
+                        {y}
+                        {isDeleteMode && <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] ${isMarkedForDelete ? "bg-black text-coral font-bold" : "bg-white/20 text-white"}`}>{isMarkedForDelete ? "✓" : "+"}</span>}
+                      </button>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* List Pengeluaran Rutin */}
-            <div className="pt-8 border-t border-white/10 mb-10">
-              <div className="flex items-center justify-between mb-6">
-                <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setRoutineEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-2 flex items-center gap-1.5 transition ${routineEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
-                    <Edit2 size={13} /> {routineEditListMode ? "Selesai Edit" : "Edit List"}
-                  </button>
-                  <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah Rutin</button>
                 </div>
               </div>
 
-              {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
-
-              <div className="space-y-3">
-                {currentYearRoutineEntries.map((e) => {
-                  const startIdx = e.startIndex !== undefined ? Number(e.startIndex) : 0;
-                  const stopIdx = e.stopIndex !== undefined ? Number(e.stopIndex) : 11;
-                  const statusText = stopIdx === 11 ? `Mulai ${MONTHS[startIdx]} (Aktif)` : `Aktif (${MONTHS[startIdx]} s.d ${MONTHS[stopIdx]})`;
-
-                  return (
-                    <div key={e.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-sm mb-1 truncate">{e.name}</div>
-                        <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
-                        <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
-                      </div>
-                      {routineEditListMode && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400 hover:text-yellow-300 px-2.5 py-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs font-medium transition" title="Stop">Stop</button>
-                          <button onClick={() => setEditingRoutine(e)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={14} /></button>
-                          <button onClick={() => requestConfirm("Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={14} /></button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="pt-8 border-t border-white/10">
-              <div className="flex items-center justify-between mb-6">
-                <SectionLabel noMargin>Tracker Cicilan SPayLater</SectionLabel>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setShowSpaylaterHistory(true)} className="text-xs text-white/70 border border-white/20 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-white/5 transition"><History size={13} /> Riwayat Selesai</button>
-                  <button onClick={() => setShowAddSpaylater(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat Cicilan</button>
+              <div className="mb-8 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
+                <div className="text-sm font-semibold mb-1">Tren Saldo Akhir</div>
+                <div className="text-[11px] text-white/40 mb-4">Tahun {data.activeYear}</div>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={budgetTrendData} margin={{ top: 5, right: 8, left: 12, bottom: 0 }}>
+                      <CartesianGrid stroke="#ffffff0d" vertical={false} />
+                      <XAxis dataKey="month" stroke="#ffffff35" fontSize={10} tickLine={false} axisLine={false} interval={0} />
+                      <YAxis hide domain={["auto", "auto"]} />
+                      <Tooltip cursor={{ stroke: "#ffffff20" }} contentStyle={{ background: "#1A1B1E", border: "1px solid #ffffff1a", borderRadius: 8, fontSize: 12 }} labelStyle={{ color: "#ffffff90" }} formatter={(v) => [rupiah(v), "Saldo Akhir"]} />
+                      <Line type="monotone" dataKey="saldo" stroke="#C8FF4D" strokeWidth={2} dot={{ r: 3, fill: "#C8FF4D", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
 
-              {(!data.spaylater || data.spaylater.filter(i => !i.isFinished).length === 0) && <EmptyRow>Belum ada tagihan SPayLater aktif.</EmptyRow>}
+              <div className="overflow-x-auto no-scrollbar swipe-ignore -mx-5 px-5 md:mx-0 md:px-0 mb-10">
+                <table className="w-full text-xs min-w-[780px]">
+                  <thead>
+                    <tr className="text-white/40 text-left border-b border-white/10">
+                      <th className="py-2 pr-3 font-normal">Bulan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Saldo Awal</th>
+                      <th className="py-2 pr-3 font-normal text-right">Gaji</th>
+                      <th className="py-2 pr-3 font-normal text-right">Gaji Tambahan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Rutin</th>
+                      <th className="py-2 pr-3 font-normal text-right">Cicilan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Pengeluaran</th>
+                      <th className="py-2 pr-3 font-normal">Keterangan</th>
+                      <th className="py-2 pr-3 font-normal text-right">Saldo Akhir</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resolvedMonthsData && MONTHS.map((m, index) => {
+                      const row = resolvedMonthsData[m];
+                      const isFirstMonth = index === 0;
+                      const currentYearStr = String(data.activeYear);
+                      const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
+                      const isFirstYear = sortedYears[0] === Number(currentYearStr);
+                      const lemburBulanIni = overtimeAmountByMonth[`${data.activeYear}-${index}`] || 0;
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {data.spaylater?.filter(item => !item.isFinished).map((item) => {
-                  const monthlyPayment = item.totalAmount / item.tenor;
-                  const paidMonthsCount = item.paidChecklist.filter(Boolean).length;
-                  const remainingMonths = item.tenor - paidMonthsCount;
-
-                  return (
-                    <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-5 transition">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <div className="font-semibold text-sm mb-1">{item.name}</div>
-                          <div className="text-[11px] text-white/40 tabular">Total: {rupiah(item.totalAmount)}</div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <button onClick={() => toggleSpaylaterFinished(item.id)} className="text-[10px] px-2.5 py-1 rounded-lg border bg-lime/10 border-lime/30 text-lime hover:bg-lime/20">Finish</button>
-                          <button onClick={() => requestConfirm("Hapus Cicilan?", "Cicilan akan dihapus dari daftar.", () => deleteSpaylater(item.id))} className="text-white/20 hover:text-coral p-1"><Trash2 size={15} /></button>
-                        </div>
-                      </div>
-                      <div className="flex justify-between items-end mb-5 border-b border-white/5 pb-4">
-                        <div>
-                          <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Per Bulan</div>
-                          <div className="font-medium text-lime text-base tabular">{rupiah(monthlyPayment)}</div>
-                        </div>
-                        <div className="text-right text-[11px] text-white/50">{remainingMonths} bulan lagi</div>
-                      </div>
-                      <div className="text-[11px] text-white/40 mb-2">Checklist Pembayaran:</div>
-                      <div className="flex flex-wrap gap-2">
-                        {item.paidChecklist.map((isPaid, idx) => (
-                          <button key={idx} onClick={() => toggleSpaylaterPaid(item.id, idx)} className={`w-9 h-9 rounded-md flex items-center justify-center text-xs font-medium transition ${isPaid ? "bg-lime text-black font-bold" : "bg-white/5 border border-white/10 text-white/40 hover:border-lime/50"}`}>
-                            {idx + 1}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "wishlist" && (
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <SectionLabel noMargin>Total sisa keperluan</SectionLabel>
-                <div className="font-semibold text-lime tabular mt-1">{rupiah(wishlistTotal)}</div>
-              </div>
-              <div className="flex bg-white/[0.04] p-1 rounded-lg">
-                <button onClick={() => setWishlistFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
-                <button onClick={() => setWishlistFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Belum</button>
-                <button onClick={() => setWishlistFilter('bought')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'bought' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Sudah</button>
-              </div>
-            </div>
-
-            <button onClick={() => setShowAddCategory(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Kategori Baru</button>
-
-            {data.wishlistCategories.length === 0 && <EmptyRow>Belum ada wishlist.</EmptyRow>}
-
-            {data.wishlistCategories.map((cat) => {
-              const catTotal = cat.items.filter((i) => !i.bought).reduce((s, i) => s + i.price, 0);
-              const filteredItems = cat.items.filter(i => {
-                if(wishlistFilter === 'active') return !i.bought;
-                if(wishlistFilter === 'bought') return i.bought;
-                return true;
-              });
-
-              if (wishlistFilter !== 'all' && filteredItems.length === 0) return null;
-
-              return (
-                <div key={cat.id} className="mb-8">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="font-semibold text-sm">{cat.name}</div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-[11px] text-white/40 tabular">{rupiah(catTotal)}</div>
-                      <button onClick={() => requestConfirm("Hapus Kategori?", "Kategori akan dihapus.", () => deleteWishlistCategory(cat.id))} className="text-white/20 hover:text-coral"><Trash2 size={13} /></button>
-                    </div>
-                  </div>
-                  {filteredItems.map((item) => (
-                    <div key={item.id} className="flex items-center gap-3 py-2.5 border-b border-white/5">
-                      <input type="checkbox" checked={item.bought} onChange={() => toggleWishlistBought(cat.id, item.id)} className="accent-lime shrink-0 w-4 h-4" />
-                      <div className={`flex-1 text-sm min-w-0 truncate ${item.bought ? "line-through text-white/30" : ""}`}>{item.name}</div>
-                      <div className={`text-sm tabular shrink-0 ${item.bought ? "text-white/30" : ""}`}>{rupiah(item.price)}</div>
-                      <button onClick={() => requestConfirm("Hapus Barang?", "Barang akan dihapus.", () => deleteWishlistItem(cat.id, item.id))} className="text-white/15 hover:text-coral"><X size={13} /></button>
-                    </div>
-                  ))}
-                  <button onClick={() => { setAddItemCategory(cat.id); setShowAddItem(true); }} className="mt-2.5 text-[11px] text-white/40 hover:text-lime flex items-center gap-1"><Plus size={11} /> Tambah barang</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {activeTab === "lembur" && (
-          <div>
-            <SectionLabel>Pengaturan Lembur</SectionLabel>
-            <div className="mb-7 flex items-center gap-3 bg-white/[0.03] border border-white/10 rounded-lg px-4 py-3.5">
-              <div className="flex-1 min-w-0">
-                <div className="text-[11px] text-white/40 mb-1">Gaji Pokok Bulanan</div>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={formatRupiahInput(data.overtimeRate)}
-                  onChange={(e) => updateOvertimeRate(parseRupiahInput(e.target.value))}
-                  className="w-full bg-transparent outline-none border-b border-white/10 focus:border-lime pb-1 text-sm font-medium tabular"
-                />
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-[11px] text-white/40 mb-1">Rate / Jam</div>
-                <div className="font-semibold text-lime tabular text-sm">{rupiah(Number(data.overtimeRate || 0) / 173)}</div>
-              </div>
-            </div>
-
-            <div className="mb-7 text-xs border border-white/10 rounded-lg overflow-hidden">
-              <div className="grid grid-cols-2 divide-x divide-white/10">
-                <div className="p-3.5">
-                  <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Kerja</div>
-                  <div className="flex justify-between text-white/70 mb-1"><span>1 jam</span><span>x1.5</span></div>
-                  <div className="flex justify-between text-white/70"><span>2 dst.</span><span>x2</span></div>
-                </div>
-                <div className="p-3.5">
-                  <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Libur</div>
-                  <div className="flex justify-between text-white/70 mb-1"><span>1-8 jam</span><span>x2</span></div>
-                  <div className="flex justify-between text-white/70 mb-1"><span>9 jam</span><span>x3</span></div>
-                  <div className="flex justify-between text-white/70"><span>10 dst.</span><span>x4</span></div>
-                </div>
-              </div>
-            </div>
-
-            <button onClick={() => setShowAddOvertime(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat Lembur</button>
-
-            {(!groupedOvertime || groupedOvertime.length === 0) && <EmptyRow>Belum ada catatan lembur.</EmptyRow>}
-
-            {groupedOvertime?.map((g) => (
-              <div key={g.label} className="mb-8">
-                <div className="text-sm font-semibold mb-2.5">{g.label}</div>
-                <div className="overflow-x-auto no-scrollbar -mx-5 px-5 md:mx-0 md:px-0">
-                  <table className="w-full text-xs min-w-[650px]">
-                    <thead>
-                      <tr className="text-white/40 text-left border-b border-white/10">
-                        <th className="py-2 pr-2 font-normal">✓</th>
-                        <th className="py-2 pr-2 font-normal">Jenis</th>
-                        <th className="py-2 pr-2 font-normal">Tgl Lembur</th>
-                        <th className="py-2 pr-2 font-normal text-right">Jam</th>
-                        <th className="py-2 pr-2 font-normal text-right">Nominal</th>
-                        <th className="py-2 pr-2 font-normal text-right">Terhitung</th>
-                        <th className="py-2 pl-1 font-normal text-right">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.entries?.map((e) => (
-                        <tr key={e.id} className="border-b border-white/5">
-                          <td className="py-2 pr-2">
-                            <input type="checkbox" checked={e.paid} onChange={() => toggleOvertimePaid(e.id)} className="accent-lime w-4 h-4 cursor-pointer" />
+                      return (
+                        <tr key={m} className="border-b border-white/5">
+                          <td className="py-1.5 pr-3 whitespace-nowrap text-white/70">{m}</td>
+                          <td className="py-1.5 pr-3 text-right tabular text-white/70">
+                            {isFirstMonth && isFirstYear ? (
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={(data.budgetYears[currentYearStr].months[m].saldoAwal || 0) === 0 ? "" : (data.budgetYears[currentYearStr].months[m].saldoAwal || 0).toLocaleString("id-ID")}
+                                onChange={(e) => updateBudgetCell(data.activeYear, m, "saldoAwal", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
+                                placeholder="0"
+                                className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5"
+                              />
+                            ) : (
+                              <span className="py-0.5 block">{row.resolvedSaldoAwal.toLocaleString("id-ID")}</span>
+                            )}
                           </td>
-                          <td className={`py-2 pr-2 ${e.jenis === "Libur" ? "text-coral" : "text-white/80"} ${!e.paid && "opacity-50"}`}>{e.jenis}</td>
-                          <td className={`py-2 pr-2 tabular whitespace-nowrap ${e.paid ? "text-white/70" : "text-white/30"}`}>{formatDateID(e.date)}</td>
-                          <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.totalJam}</td>
-                          <td className="py-2 pr-2 text-right tabular"><span className={e.paid ? "text-white" : "text-white/40"}>{rupiah(e.amount)}</span></td>
-                          <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.hrs}</td>
-                          <td className="py-2 pl-1 text-right flex items-center justify-end gap-1">
-                            <button onClick={() => setEditingOvertime(e)} className="text-white/30 hover:text-white p-1" title="Edit lembur"><Edit2 size={12} /></button>
-                            <button onClick={() => requestConfirm("Hapus Lembur?", "Catatan lembur akan dihapus.", () => deleteOvertimeEntry(e.id))} className="text-white/20 hover:text-coral p-1" title="Hapus"><Trash2 size={12} /></button>
+
+                          {/* Gaji (Manual jika kosong, Terkunci jika sudah diisi via Riwayat Gaji) */}
+                          <td className="py-1.5 pr-3 text-right">
+                            {(() => {
+                              const salList = salaryByMonth[`${data.activeYear}-${index}`] || [];
+                              const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
+                              const hasSalaryRecord = rawGajiKotor > 0;
+
+                              if (!hasSalaryRecord) {
+                                return (
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={(data.budgetYears[String(data.activeYear)].months[m].gaji || 0) === 0 ? "" : (data.budgetYears[String(data.activeYear)].months[m].gaji || 0).toLocaleString("id-ID")}
+                                    onChange={(e) => updateBudgetCell(data.activeYear, m, "gaji", Number(e.target.value.replace(/[^0-9]/g, "")) || 0)}
+                                    placeholder="0"
+                                    className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-lime tabular py-0.5 text-white"
+                                  />
+                                );
+                              } else {
+                                return (
+                                  <span
+                                    className="cursor-pointer border-b border-dotted border-lime/50 inline-block py-0.5 tabular text-white"
+                                    onClick={(e) => handleTogglePopup(e, m, salList, "Gaji")}
+                                  >
+                                    {row.gaji.toLocaleString("id-ID")}
+                                  </span>
+                                );
+                              }
+                            })()}
+                          </td>
+
+                          {/* Gaji Tambahan */}
+                          <td className="py-1.5 pr-3 text-right tabular text-teal">
+                            {(() => {
+                              const incList = gajiTambahanByMonth[`${data.activeYear}-${index}`] || [];
+                              const totalIncome = incList.reduce((s, i) => s + i.amount, 0);
+                              const totalCombined = totalIncome + lemburBulanIni;
+                              if (totalCombined <= 0) return <span>0</span>;
+                              return (
+                                <span
+                                  className="cursor-pointer border-b border-dotted border-teal/50 inline-block py-0.5"
+                                  onClick={(e) => handleTogglePopup(e, m, [
+                                    ...incList,
+                                    ...(lemburBulanIni > 0 ? [{ id: `lembur-${index}`, name: "Lembur", amount: lemburBulanIni }] : [])
+                                  ], "Gaji Tambahan")}
+                                >
+                                  {totalCombined.toLocaleString("id-ID")}
+                                </span>
+                              );
+                            })()}
+                          </td>
+
+                          {/* Rutin */}
+                          <td className="py-1.5 pr-3 text-right tabular text-white/80">
+                            {row.rutin > 0 ? (
+                              <span 
+                                className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
+                                onClick={(e) => handleTogglePopup(e, m, routineByMonth[`${data.activeYear}-${index}`] || [], "Rutin")}
+                              >
+                                {row.rutin.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span>0</span>
+                            )}
+                          </td>
+
+                          {/* Cicilan */}
+                          <td className="py-1.5 pr-3 text-right tabular text-white/80">
+                            {row.cicilan > 0 ? (
+                              <span 
+                                className="cursor-pointer border-b border-dotted border-white/30 inline-block py-0.5"
+                                onClick={(e) => handleTogglePopup(e, m, spaylaterByMonth[`${data.activeYear}-${index}`] || [], "Cicilan")}
+                              >
+                                {row.cicilan.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span>0</span>
+                            )}
+                          </td>
+
+                          {/* Pengeluaran */}
+                          <td className="py-1.5 pr-3 text-right tabular text-coral">
+                            {row.pengeluaran > 0 ? (
+                              <span 
+                                className="cursor-pointer border-b border-dotted border-coral/50 inline-block py-0.5"
+                                onClick={(e) => handleTogglePopup(e, m, pengeluaranByMonth[`${data.activeYear}-${index}`] || [], "Pengeluaran")}
+                              >
+                                {row.pengeluaran.toLocaleString("id-ID")}
+                              </span>
+                            ) : (
+                              <span>0</span>
+                            )}
+                          </td>
+
+                          <td className="py-1.5 pr-3">
+                            <input value={row.keterangan || ""} onChange={(e) => updateBudgetCell(data.activeYear, m, "keterangan", e.target.value)} placeholder="-" className="w-28 bg-transparent outline-none border-b border-transparent focus:border-lime py-0.5" />
+                          </td>
+                          <td className={`py-1.5 pr-3 text-right tabular font-medium ${row.resolvedSaldoAkhir < 0 ? "text-coral" : "text-lime"}`}>
+                            {rupiah(row.resolvedSaldoAkhir)}
                           </td>
                         </tr>
-                      ))}
-                      <tr className="font-semibold">
-                        <td colSpan={4} className="py-2 pr-2 pt-3">Total</td>
-                        <td className="py-2 pr-2 pt-3 text-right tabular">
-                          <div className="text-lime">{rupiah(g.totalCair)}</div>
-                          {g.totalRp !== g.totalCair && <div className="text-[9px] text-white/40">dari {rupiah(g.totalRp)}</div>}
-                        </td>
-                        <td className="py-2 pr-2 pt-3 text-right tabular">{g.totalHrs}</td>
-                        <td></td>
-                      </tr>
-                    </tbody>
-                  </table>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* List Pengeluaran Rutin */}
+              <div className="pt-8 border-t border-white/10 mb-10">
+                <div className="flex items-center justify-between mb-6">
+                  <div 
+                    className="flex items-center gap-2 cursor-pointer group hover:bg-white/5 px-2 py-1 -ml-2 rounded-lg transition"
+                    onClick={() => setIsRoutineCollapsed(!isRoutineCollapsed)}
+                  >
+                    <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
+                    {isRoutineCollapsed ? (
+                      <ChevronDown size={14} className="text-white/40 group-hover:text-white transition" />
+                    ) : (
+                      <ChevronUp size={14} className="text-white/40 group-hover:text-white transition" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setRoutineEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-2 flex items-center gap-1.5 transition ${routineEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
+                      <Edit2 size={13} /> {routineEditListMode ? "Selesai" : "Edit List"}
+                    </button>
+                    <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah</button>
+                  </div>
+                </div>
+
+                {!isRoutineCollapsed && (
+                  <>
+                    {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
+                    <div className="space-y-3">
+                      {currentYearRoutineEntries.map((e) => {
+                        const startIdx = e.startIndex !== undefined ? Number(e.startIndex) : 0;
+                        const stopIdx = e.stopIndex !== undefined ? Number(e.stopIndex) : 11;
+                        const statusText = stopIdx === 11 ? `Mulai ${MONTHS[startIdx]} (Aktif)` : `Aktif (${MONTHS[startIdx]} s.d ${MONTHS[stopIdx]})`;
+
+                        return (
+                          <div key={e.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-semibold text-sm mb-1 truncate">{e.name}</div>
+                              <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
+                              <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
+                            </div>
+                            {routineEditListMode && (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400 hover:text-yellow-300 px-2.5 py-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs font-medium transition" title="Stop">Stop</button>
+                                <button onClick={() => setEditingRoutine(e)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={14} /></button>
+                                <button onClick={() => requestConfirm("Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={14} /></button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="pt-8 border-t border-white/10">
+                <div className="flex items-center justify-between mb-4">
+                  <SectionLabel noMargin>Tracker Cicilan SPayLater</SectionLabel>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setShowSpaylaterHistory(true)} className="text-xs text-white/70 border border-white/20 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-white/5 transition"><History size={13} /> Riwayat</button>
+                    <button onClick={() => setShowAddSpaylater(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat</button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col md:flex-row gap-2.5 mb-6">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25" />
+                    <input
+                      value={spaySearch}
+                      onChange={(e) => setSpaySearch(e.target.value)}
+                      placeholder="Cari nama cicilan..."
+                      className="w-full bg-white/[0.04] border border-white/10 rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:border-lime placeholder:text-white/25 transition-colors text-white"
+                    />
+                  </div>
+                  <div className="relative shrink-0 w-full md:w-auto">
+                    <select
+                      value={spaySort}
+                      onChange={(e) => setSpaySort(e.target.value)}
+                      className="w-full md:w-auto pl-9 pr-8 py-2.5 bg-white/[0.04] border border-white/10 rounded-lg text-xs outline-none focus:border-lime text-white appearance-none cursor-pointer"
+                    >
+                      <option value="default" className="bg-surface">Urutan Default</option>
+                      <option value="name_asc" className="bg-surface">Nama (A - Z)</option>
+                      <option value="name_desc" className="bg-surface">Nama (Z - A)</option>
+                      <option value="price_desc" className="bg-surface">Harga Tertinggi</option>
+                      <option value="price_asc" className="bg-surface">Harga Terendah</option>
+                      <option value="tenor_desc" className="bg-surface">Tenor Terlama</option>
+                      <option value="tenor_asc" className="bg-surface">Tenor Tersingkat</option>
+                    </select>
+                    <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+                  </div>
+                </div>
+
+                {activeSpaylaterList.length === 0 && <EmptyRow>Belum ada tagihan SPayLater aktif / ditemukan.</EmptyRow>}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activeSpaylaterList.map((item) => {
+                    const monthlyPayment = item.totalAmount / item.tenor;
+                    const paidMonthsCount = item.paidChecklist.filter(Boolean).length;
+                    const remainingMonths = item.tenor - paidMonthsCount;
+
+                    return (
+                      <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-5 transition hover:bg-white/[0.05]">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <div className="font-semibold text-sm mb-1">{item.name}</div>
+                            <div className="text-[11px] text-white/40 tabular">Total: {rupiah(item.totalAmount)}</div>
+                            <div className="text-[10px] text-teal mt-0.5">Potong dari: {data.wallets.find(w => w.id === item.walletId)?.name || "Dompet"}</div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => toggleSpaylaterFinished(item.id)} className="text-[10px] px-2.5 py-1 rounded-lg border bg-lime/10 border-lime/30 text-lime hover:bg-lime/20 font-medium">Finish</button>
+                            <button onClick={() => requestConfirm("Hapus Cicilan?", "Cicilan akan dihapus dari daftar.", () => deleteSpaylater(item.id))} className="text-white/20 hover:text-coral p-1"><Trash2 size={15} /></button>
+                          </div>
+                        </div>
+                        <div className="flex justify-between items-end mb-5 border-b border-white/5 pb-4">
+                          <div>
+                            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Per Bulan</div>
+                            <div className="font-medium text-lime text-base tabular">{rupiah(monthlyPayment)}</div>
+                          </div>
+                          <div className="text-right text-[11px] text-white/50">{remainingMonths} bulan lagi</div>
+                        </div>
+                        <div className="text-[11px] text-white/40 mb-2">Checklist Pembayaran:</div>
+                        <div className="flex flex-wrap gap-2">
+                          {item.paidChecklist.map((isPaid, idx) => (
+                            <button key={idx} onClick={() => toggleSpaylaterPaid(item.id, idx)} className={`w-9 h-9 rounded-md flex items-center justify-center text-xs font-medium transition ${isPaid ? "bg-lime text-black font-bold" : "bg-white/5 border border-white/10 text-white/40 hover:border-lime/50"}`}>
+                              {idx + 1}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          )}
+
+          {activeTab === "tasks" && (
+            <div>
+              <div className="flex items-center gap-4 mb-6">
+                <div>
+                  <SectionLabel noMargin>Total Tugas</SectionLabel>
+                  <div className="font-semibold text-lg tabular mt-1">{taskStats.total}</div>
+                </div>
+                <div>
+                  <SectionLabel noMargin>Selesai</SectionLabel>
+                  <div className="font-semibold text-lg tabular mt-1 text-teal">{taskStats.done}</div>
+                </div>
+                {taskStats.overdue > 0 && (
+                  <div>
+                    <SectionLabel noMargin>Terlambat</SectionLabel>
+                    <div className="font-semibold text-lg tabular mt-1 text-coral flex items-center gap-1">
+                      <AlertCircle size={15} /> {taskStats.overdue}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex bg-white/[0.04] p-1 rounded-lg">
+                  <button onClick={() => setTaskFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Aktif</button>
+                  <button onClick={() => setTaskFilter('done')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'done' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Selesai</button>
+                  <button onClick={() => setTaskFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${taskFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
+                </div>
+                <button onClick={() => setShowAddTask(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tugas Baru</button>
+              </div>
+
+              {sortedFilteredTasks.length === 0 && <EmptyRow>Tidak ada tugas di sini.</EmptyRow>}
+
+              <div className="space-y-3">
+                {sortedFilteredTasks.map((t) => {
+                  const prio = PRIORITIES.find((p) => p.id === t.priority) || PRIORITIES[1];
+                  const isExpanded = expandedTaskId === t.id;
+                  const subDone = Array.isArray(t.subtasks) ? t.subtasks.filter((s) => s.done).length : 0;
+                  const subTotal = Array.isArray(t.subtasks) ? t.subtasks.length : 0;
+                  const isOverdue = !t.done && t.dueDate && t.dueDate < todayKey();
+
+                  return (
+                    <div key={t.id} className={`bg-white/[0.03] border rounded-xl p-4 transition ${t.done ? "border-white/5 opacity-60" : isOverdue ? "border-coral/40" : "border-white/10"}`}>
+                      <div className="flex items-start gap-3">
+                        <button onClick={() => toggleTaskDone(t.id)} className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition ${t.done ? "bg-lime border-lime" : "border-white/25 hover:border-lime"}`}>
+                          {t.done && <Check size={13} className="text-black" strokeWidth={3} />}
+                        </button>
+
+                        <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`font-medium text-sm truncate ${t.done ? "line-through text-white/40" : ""}`}>{t.title}</span>
+                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0" style={{ backgroundColor: prio.color + "26", color: prio.color }}>{prio.label}</span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[11px] text-white/40">
+                            {t.dueDate && <span className={isOverdue ? "text-coral font-medium" : ""}>{formatDateID(t.dueDate)}</span>}
+                            {subTotal > 0 && <span>{subDone}/{subTotal} sub-tugas</span>}
+                          </div>
+                          {subTotal > 0 && (
+                            <div className="h-[3px] bg-white/8 overflow-hidden rounded-full mt-2">
+                              <div className="h-full bg-lime rounded-full transition-all" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => setEditingTask(t)} className="text-white/30 hover:text-white p-1.5"><Edit2 size={13} /></button>
+                          <button onClick={() => requestConfirm("Hapus Tugas?", `Tugas "${t.title}" akan dihapus.`, () => deleteTask(t.id))} className="text-white/30 hover:text-coral p-1.5"><Trash2 size={13} /></button>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-white/5">
+                          {t.description && <p className="text-xs text-white/60 mb-3 leading-relaxed">{t.description}</p>}
+                          {Array.isArray(t.subtasks) && t.subtasks.length > 0 && (
+                            <div className="space-y-1.5">
+                              {t.subtasks.map((s) => (
+                                <label key={s.id} className="flex items-center gap-2 cursor-pointer">
+                                  <input type="checkbox" checked={s.done} onChange={() => toggleSubtask(t.id, s.id)} className="accent-lime w-3.5 h-3.5" />
+                                  <span className={`text-xs ${s.done ? "line-through text-white/30" : "text-white/70"}`}>{s.text}</span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {activeTab === "wishlist" && (
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <SectionLabel noMargin>Total sisa keperluan</SectionLabel>
+                  <div className="font-semibold text-lime tabular mt-1">{rupiah(wishlistTotal)}</div>
+                </div>
+                <div className="flex bg-white/[0.04] p-1 rounded-lg">
+                  <button onClick={() => setWishlistFilter('all')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'all' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Semua</button>
+                  <button onClick={() => setWishlistFilter('active')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'active' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Belum</button>
+                  <button onClick={() => setWishlistFilter('bought')} className={`px-3 py-1.5 rounded-md text-[10px] font-medium ${wishlistFilter === 'bought' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Sudah</button>
+                </div>
+              </div>
+
+              <button onClick={() => setShowAddCategory(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Kategori Baru</button>
+
+              {data.wishlistCategories.length === 0 && <EmptyRow>Belum ada wishlist.</EmptyRow>}
+
+              {data.wishlistCategories.map((cat) => {
+                const catTotal = cat.items.filter((i) => !i.bought).reduce((s, i) => s + i.price, 0);
+                const filteredItems = cat.items.filter(i => {
+                  if(wishlistFilter === 'active') return !i.bought;
+                  if(wishlistFilter === 'bought') return i.bought;
+                  return true;
+                });
+
+                if (wishlistFilter !== 'all' && filteredItems.length === 0) return null;
+
+                return (
+                  <div key={cat.id} className="mb-8">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="font-semibold text-sm">{cat.name}</div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-[11px] text-white/40 tabular">{rupiah(catTotal)}</div>
+                        <button onClick={() => requestConfirm("Hapus Kategori?", "Kategori akan dihapus.", () => deleteWishlistCategory(cat.id))} className="text-white/20 hover:text-coral"><Trash2 size={13} /></button>
+                      </div>
+                    </div>
+                    {filteredItems.map((item) => {
+                      const isItemExpanded = expandedWishlistId === item.id;
+                      return (
+                        <div key={item.id} className="border-b border-white/5 py-2.5">
+                          <div className="flex items-center gap-3">
+                            <input type="checkbox" checked={item.bought} onChange={() => toggleWishlistBought(cat.id, item.id)} className="accent-lime shrink-0 w-4 h-4" />
+                            <div 
+                              onClick={() => setExpandedWishlistId(isItemExpanded ? null : item.id)}
+                              className={`flex-1 text-sm min-w-0 truncate cursor-pointer hover:text-lime transition ${item.bought ? "line-through text-white/30" : ""}`}
+                            >
+                              {item.name}
+                            </div>
+                            <div className={`text-sm tabular shrink-0 ${item.bought ? "text-white/30" : ""}`}>{rupiah(item.price)}</div>
+                            <button onClick={() => requestConfirm("Hapus Barang?", "Barang akan dihapus.", () => deleteWishlistItem(cat.id, item.id))} className="text-white/15 hover:text-coral ml-1"><X size={13} /></button>
+                          </div>
+                          {isItemExpanded && (
+                            <div className="mt-2.5 pl-7 flex items-center justify-between bg-white/[0.02] p-2 rounded-lg border border-white/10">
+                              {item.link ? (
+                                <a href={item.link.startsWith("http") ? item.link : `https://${item.link}`} target="_blank" rel="noopener noreferrer" className="text-xs text-teal hover:underline flex items-center gap-1.5 truncate mr-2">
+                                  <ExternalLink size={13} /> Buka Link Marketplace
+                                </a>
+                              ) : (
+                                <span className="text-[11px] text-white/30 italic">Belum ada link marketplace yang dimasukkan.</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <button onClick={() => { setAddItemCategory(cat.id); setShowAddItem(true); }} className="mt-2.5 text-[11px] text-white/40 hover:text-lime flex items-center gap-1"><Plus size={11} /> Tambah barang</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {activeTab === "lembur" && (
+            <div>
+              <SectionLabel>Pengaturan Lembur</SectionLabel>
+              <div className="mb-7 flex items-center gap-3 bg-white/[0.03] border border-white/10 rounded-lg px-4 py-3.5">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] text-white/40 mb-1">Gaji Pokok Bulanan</div>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={formatRupiahInput(data.overtimeRate)}
+                    onChange={(e) => updateOvertimeRate(parseRupiahInput(e.target.value))}
+                    className="w-full bg-transparent outline-none border-b border-white/10 focus:border-lime pb-1 text-sm font-medium tabular"
+                  />
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-[11px] text-white/40 mb-1">Rate / Jam</div>
+                  <div className="font-semibold text-lime tabular text-sm">{rupiah(Number(data.overtimeRate || 0) / 173)}</div>
+                </div>
+              </div>
+
+              <div className="mb-7 text-xs border border-white/10 rounded-lg overflow-hidden">
+                <div className="grid grid-cols-2 divide-x divide-white/10">
+                  <div className="p-3.5">
+                    <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Kerja</div>
+                    <div className="flex justify-between text-white/70 mb-1"><span>1 jam</span><span>x1.5</span></div>
+                    <div className="flex justify-between text-white/70"><span>2 dst.</span><span>x2</span></div>
+                  </div>
+                  <div className="p-3.5">
+                    <div className="text-white/40 mb-2 uppercase tracking-wider text-[10px]">Hari Libur</div>
+                    <div className="flex justify-between text-white/70 mb-1"><span>1-8 jam</span><span>x2</span></div>
+                    <div className="flex justify-between text-white/70 mb-1"><span>9 jam</span><span>x3</span></div>
+                    <div className="flex justify-between text-white/70"><span>10 dst.</span><span>x4</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <button onClick={() => setShowAddOvertime(true)} className="mb-7 text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat Lembur</button>
+
+              {(!groupedOvertime || groupedOvertime.length === 0) && <EmptyRow>Belum ada catatan lembur.</EmptyRow>}
+
+              {groupedOvertime?.map((g) => (
+                <div key={g.label} className="mb-8">
+                  <div className="text-sm font-semibold mb-2.5">{g.label}</div>
+                  <div className="overflow-x-auto no-scrollbar swipe-ignore -mx-5 px-5 md:mx-0 md:px-0">
+                    <table className="w-full text-xs min-w-[650px]">
+                      <thead>
+                        <tr className="text-white/40 text-left border-b border-white/10">
+                          <th className="py-2 pr-2 font-normal">✓</th>
+                          <th className="py-2 pr-2 font-normal">Jenis</th>
+                          <th className="py-2 pr-2 font-normal">Tgl Lembur</th>
+                          <th className="py-2 pr-2 font-normal text-right">Jam</th>
+                          <th className="py-2 pr-2 font-normal text-right">Nominal</th>
+                          <th className="py-2 pr-2 font-normal text-right">Terhitung</th>
+                          <th className="py-2 pl-1 font-normal text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.entries?.map((e) => (
+                          <tr key={e.id} className="border-b border-white/5">
+                            <td className="py-2 pr-2">
+                              <input type="checkbox" checked={e.paid} onChange={() => toggleOvertimePaid(e.id)} className="accent-lime w-4 h-4 cursor-pointer" />
+                            </td>
+                            <td className={`py-2 pr-2 ${e.jenis === "Libur" ? "text-coral" : "text-white/80"} ${!e.paid && "opacity-50"}`}>{e.jenis}</td>
+                            <td className={`py-2 pr-2 tabular whitespace-nowrap ${e.paid ? "text-white/70" : "text-white/30"}`}>{formatDateID(e.date)}</td>
+                            <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.totalJam}</td>
+                            <td className="py-2 pr-2 text-right tabular"><span className={e.paid ? "text-white" : "text-white/40"}>{rupiah(e.amount)}</span></td>
+                            <td className={`py-2 pr-2 text-right tabular ${!e.paid && "opacity-50"}`}>{e.hrs}</td>
+                            <td className="py-2 pl-1 text-right flex items-center justify-end gap-1">
+                              <button onClick={() => setEditingOvertime(e)} className="text-white/30 hover:text-white p-1" title="Edit lembur"><Edit2 size={12} /></button>
+                              <button onClick={() => requestConfirm("Hapus Lembur?", "Catatan lembur akan dihapus.", () => deleteOvertimeEntry(e.id))} className="text-white/20 hover:text-coral p-1" title="Hapus"><Trash2 size={12} /></button>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="font-semibold">
+                          <td colSpan={4} className="py-2 pr-2 pt-3">Total</td>
+                          <td className="py-2 pr-2 pt-3 text-right tabular">
+                            <div className="text-lime">{rupiah(g.totalCair)}</div>
+                            {g.totalRp !== g.totalCair && <div className="text-[9px] text-white/40">dari {rupiah(g.totalRp)}</div>}
+                          </td>
+                          <td className="py-2 pr-2 pt-3 text-right tabular">{g.totalHrs}</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {activeTab === "home" && (
@@ -1929,6 +2512,13 @@ export default function AgrLedgerApp() {
           </button>
         </div>
       )}
+      {activeTab === "tasks" && (
+        <div className="fixed bottom-6 left-0 right-0 flex justify-center px-5 pointer-events-none">
+          <button onClick={() => setShowAddTask(true)} className="bg-lime text-black font-semibold rounded-full px-6 py-3.5 flex items-center gap-2 cta-shadow active:scale-95 transition pointer-events-auto">
+            <Plus size={17} strokeWidth={2.5} /> Tugas Baru
+          </button>
+        </div>
+      )}
 
       {routineStopTarget && (
         <RoutineStopSheet item={routineStopTarget} onClose={() => setRoutineStopTarget(null)} onStop={(stopIdx) => { updateRoutineEntry(routineStopTarget.id, { stopIndex: stopIdx }); setRoutineStopTarget(null); }} />
@@ -1941,7 +2531,7 @@ export default function AgrLedgerApp() {
               <div className="font-semibold text-base flex items-center gap-2"><History size={16} className="text-lime" /> Riwayat Cicilan Selesai</div>
               <button onClick={() => setShowSpaylaterHistory(false)} className="text-white/40 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="space-y-3 overflow-y-auto no-scrollbar flex-1 pr-1">
+            <div className="space-y-3 overflow-y-auto flex-1 pr-1">
               {data.spaylater?.filter(item => item.isFinished).length === 0 ? (
                 <div className="text-xs text-white/40 text-center py-8">Riwayat kosong</div>
               ) : (
@@ -1968,21 +2558,64 @@ export default function AgrLedgerApp() {
         </div>
       )}
 
+      {showSalaryHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
+          <div className="w-full max-w-md bg-surface rounded-2xl p-6 border border-white/10 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="font-semibold text-base flex items-center gap-2"><History size={16} className="text-lime" /> Riwayat Gaji Kotor</div>
+              <button onClick={() => setShowSalaryHistory(false)} className="text-white/40 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-3 overflow-y-auto flex-1 pr-1">
+              {(!data.salaryEntries || data.salaryEntries.length === 0) ? (
+                <div className="text-xs text-white/40 text-center py-8">Belum ada riwayat gaji</div>
+              ) : (
+                [...data.salaryEntries].sort((a, b) => b.date.localeCompare(a.date)).map((item) => (
+                  <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm text-white truncate">{formatDateID(item.date)}</div>
+                      <div className="text-[11px] text-white/40 mt-0.5">{data.wallets.find(w => w.id === item.walletId)?.name || "Dompet dihapus"}</div>
+                      <div className="text-xs font-medium text-lime tabular mt-1">{rupiah(item.amount)}</div>
+                    </div>
+                    <button onClick={() => requestConfirm("Hapus Riwayat Gaji?", "Entri gaji kotor ini akan dihapus.", () => deleteSalaryEntry(item.id))} className="text-white/30 hover:text-coral p-2"><Trash2 size={15} /></button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="flex gap-2 mt-4">
+              {data.salaryEntries && data.salaryEntries.length > 0 && (
+                <button 
+                  onClick={() => requestConfirm("Hapus Semua Riwayat Gaji?", "Seluruh data riwayat gaji kotor akan dihapus permanen.", () => clearAllSalaryEntries())} 
+                  className="flex-1 bg-coral/10 border border-coral/30 hover:bg-coral/20 text-coral font-semibold rounded-lg py-3 text-xs transition"
+                >
+                  Hapus Semua
+                </button>
+              )}
+              <button onClick={() => setShowSalaryHistory(false)} className="flex-1 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg py-3 text-xs transition">Tutup</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activePopup && (
-        <div className="fixed z-50 w-72 bg-surface border border-white/15 rounded-xl shadow-2xl p-4 text-left" style={{ left: activePopup.left, top: activePopup.top }} onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+        <div className="fixed z-50 w-72 bg-surface border border-white/15 rounded-xl shadow-2xl p-4 text-left flex flex-col" style={{ left: activePopup.left, top: activePopup.top, maxHeight: '50vh' }} onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10 shrink-0">
             <span className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Rincian {activePopup.typeLabel} {activePopup.label}</span>
             <button onClick={() => setActivePopup(null)} className="text-white/40 hover:text-white p-0.5"><X size={14} /></button>
           </div>
-          <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar">
+          <div className="space-y-2 overflow-y-auto pr-1 flex-1">
             {activePopup.breakdown.map((b, idx) => (
               <div key={b.id || idx} className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-white/70 truncate">{b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}</span>
-                <span className={`tabular shrink-0 ${b.paid ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className={`tabular ${b.paid ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
+                  {activePopup.typeLabel === "Gaji" && !String(b.id).startsWith("lembur") && (
+                    <button onClick={() => { deleteSalaryEntry(b.id); setActivePopup(null); }} className="text-white/30 hover:text-coral"><Trash2 size={12} /></button>
+                  )}
+                </span>
               </div>
             ))}
           </div>
-          <div className="flex items-center justify-between text-xs font-semibold mt-3 pt-2.5 border-t border-white/10">
+          <div className="flex items-center justify-between text-xs font-semibold mt-3 pt-2.5 border-t border-white/10 shrink-0">
             <span>Total</span><span className="tabular text-lime">{rupiah(activePopup.breakdown.reduce((s, b) => s + b.amount, 0))}</span>
           </div>
         </div>
@@ -2006,11 +2639,11 @@ export default function AgrLedgerApp() {
       )}
 
       {showAdd && (
-        <TransactionSheet wallets={data.wallets} title="Catat Transaksi" defaultType={addType} onClose={() => setShowAdd(false)} onSubmit={(payload) => { addTransaction(payload); setShowAdd(false); }} />
+        <TransactionSheet wallets={data.wallets} primaryWalletId={data.primaryWalletId} title="Catat Transaksi" defaultType={addType} onClose={() => setShowAdd(false)} onSubmit={(payload) => { addTransaction(payload); setShowAdd(false); }} onSalarySubmit={(payload) => { addSalaryEntry({ ...payload, walletId: data.primaryWalletId || data.wallets[0]?.id }); setShowAdd(false); }} />
       )}
 
       {editingTx && (
-        <TransactionSheet wallets={data.wallets} title="Edit Transaksi" initialData={editingTx} onClose={() => setEditingTx(null)} onSubmit={(payload) => { updateTransaction(editingTx.id, payload); setEditingTx(null); }} />
+        <TransactionSheet wallets={data.wallets} primaryWalletId={data.primaryWalletId} title="Edit Transaksi" initialData={editingTx} onClose={() => setEditingTx(null)} onSubmit={(payload) => { updateTransaction(editingTx.id, payload); setEditingTx(null); }} />
       )}
 
       {showAddGoal && (
@@ -2026,7 +2659,7 @@ export default function AgrLedgerApp() {
       )}
 
       {showAddItem && (
-        <AddWishlistItemSheet onClose={() => { setShowAddItem(false); setAddItemCategory(null); }} onSubmit={({ name, price }) => { addWishlistItem(addItemCategory, { name, price }); setShowAddItem(false); setAddItemCategory(null); }} />
+        <AddWishlistItemSheet onClose={() => { setShowAddItem(false); setAddItemCategory(null); }} onSubmit={({ name, price, link }) => { addWishlistItem(addItemCategory, { name, price, link }); setShowAddItem(false); setAddItemCategory(null); }} />
       )}
 
       {showAddOvertime && (
@@ -2046,164 +2679,70 @@ export default function AgrLedgerApp() {
       )}
 
       {showAddSpaylater && (
-        <AddSpaylaterSheet onClose={() => setShowAddSpaylater(false)} onSubmit={(payload) => { addSpaylater(payload); setShowAddSpaylater(false); }} />
+        <AddSpaylaterSheet wallets={data.wallets} primaryWalletId={data.primaryWalletId} onClose={() => setShowAddSpaylater(false)} onSubmit={(payload) => { addSpaylater(payload); setShowAddSpaylater(false); }} />
+      )}
+
+      {showAddTask && (
+        <AddTaskSheet onClose={() => setShowAddTask(false)} onSubmit={(payload) => { addTask(payload); setShowAddTask(false); }} />
+      )}
+
+      {editingTask && (
+        <AddTaskSheet
+          initialData={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSubmit={(payload) => {
+            updateTask(editingTask.id, {
+              title: payload.title,
+              description: payload.description,
+              priority: payload.priority,
+              dueDate: payload.dueDate,
+              subtasks: payload.subtasks,
+            });
+            setEditingTask(null);
+          }}
+        />
       )}
     </div>
   );
 }
 
-function TopUpGoalSheet({ goal, onClose, onSubmit }) {
-  const [amount, setAmount] = useState("");
-  const canSubmit = parseRupiahInput(amount) > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Nabung: {goal.name}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <div className="text-[11px] text-white/40 mb-1">Terkumpul: {rupiah(goal.saved)}</div>
-        <label className="text-[11px] text-white/40 font-medium">Nominal ditabung (Rp)</label>
-        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus-lime" autoFocus />
-        <button disabled={!canSubmit} onClick={() => onSubmit(parseRupiahInput(amount))} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 flex items-center justify-center gap-1.5">Tambah <ChevronRight size={16} /></button>
-      </div>
-    </div>
-  );
-}
-
-function AddRoutineSheet({ onClose, onSubmit, initialData }) {
-  const [name, setName] = useState(initialData?.name || "");
-  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
-  const [startIndex, setStartIndex] = useState(initialData?.startIndex !== undefined ? String(initialData.startIndex) : "0");
-
-  const canSubmit = name.trim() && parseRupiahInput(amount) > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto no-scrollbar">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">{initialData ? "Edit Rutin" : "Tambah Pengeluaran Rutin"}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-
-        <label className="text-[11px] text-white/40 font-medium">Nama Pengeluaran Rutin</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Wifi / Listrik" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
-
-        <label className="text-[11px] text-white/40 font-medium">Mulai Dari Bulan Berapa?</label>
-        <select value={startIndex} onChange={(e) => setStartIndex(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime text-white">
-          {MONTHS.map((m, idx) => (
-            <option key={idx} value={String(idx)} className="bg-surface text-white">
-              {m}
-            </option>
-          ))}
-        </select>
-
-        <label className="text-[11px] text-white/40 font-medium">Nominal Per Bulan (Rp)</label>
-        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus:border-lime" />
-
-        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), amount: parseRupiahInput(amount), startIndex: Number(startIndex) })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan</button>
-      </div>
-    </div>
-  );
-}
-
-function RoutineStopSheet({ item, onClose, onStop }) {
-  const [stopIndex, setStopIndex] = useState(String(Math.max(item.startIndex || 0, new Date().getMonth())));
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
-        <div className="flex items-center justify-between mb-4">
-          <div className="font-semibold text-base">Stop Berlangganan: {item.name}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <p className="text-xs text-white/60 mb-4 leading-relaxed">Pilih bulan terakhir pengeluaran rutin ini aktif. Bulan-bulan sebelumnya di tabel anggaran akan tetap aman/tersimpan, namun mulai bulan berikutnya otomatis berhenti.</p>
-
-        <label className="text-[11px] text-white/40 font-medium">Aktif Terakhir Sampai Bulan:</label>
-        <select value={stopIndex} onChange={(e) => setStopIndex(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime text-white">
-          {MONTHS.map((m, idx) => {
-            if (idx < (item.startIndex || 0)) return null;
-            return (
-              <option key={idx} value={String(idx)} className="bg-surface text-white">
-                {m}
-              </option>
-            );
-          })}
-        </select>
-
-        <button onClick={() => onStop(Number(stopIndex))} className="w-full bg-coral text-black font-semibold rounded-lg py-3.5 text-xs">Terapkan Stop Berlangganan</button>
-      </div>
-    </div>
-  );
-}
-
-function AddSpaylaterSheet({ onClose, onSubmit }) {
-  const [name, setName] = useState("");
-  const [totalAmount, setTotalAmount] = useState("");
-  const [tenor, setTenor] = useState("3");
-  const today = new Date();
-  const defaultDate = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-  const [purchaseDate, setPurchaseDate] = useState(defaultDate);
-
-  const canSubmit = name.trim() && parseRupiahInput(totalAmount) > 0 && Number(tenor) > 0 && purchaseDate;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Tambah Cicilan SPayLater</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">Nama Barang</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Checkout Shopee" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Tanggal Pembelian</label>
-        <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Total Harga (Rp)</label>
-        <input type="text" inputMode="numeric" value={totalAmount} onChange={(e) => setTotalAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Tenor (Bulan)</label>
-        <div className="flex gap-2 mt-1.5 mb-6">
-          {["1", "3", "6", "12"].map((t) => (
-            <button key={t} onClick={() => setTenor(t)} className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${tenor === t ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>
-              {t === "1" ? "1x" : `${t} Bln`}
-            </button>
-          ))}
-        </div>
-        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), totalAmount: parseRupiahInput(totalAmount), tenor: Number(tenor), purchaseDate })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan Cicilan</button>
-      </div>
-    </div>
-  );
-}
-
-function TransactionSheet({ wallets, title, defaultType, initialData, onClose, onSubmit }) {
+function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initialData, onClose, onSubmit, onSalarySubmit }) {
   const [type, setType] = useState(initialData?.type || defaultType || "expense");
   const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
   const [category, setCategory] = useState(initialData?.category || CATEGORIES[0].id);
   const [note, setNote] = useState(initialData?.note || "");
-  const [walletId, setWalletId] = useState(initialData?.walletId || wallets[0]?.id);
+  const [walletId, setWalletId] = useState(initialData?.walletId || primaryWalletId || wallets[0]?.id);
   const [fromWalletId, setFromWalletId] = useState(initialData?.fromWalletId || wallets[0]?.id);
   const [toWalletId, setToWalletId] = useState(initialData?.toWalletId || (wallets.length > 1 ? wallets[1].id : wallets[0]?.id));
   const [date, setDate] = useState(initialData?.date || todayKey());
 
-  const canSubmit = parseRupiahInput(amount) > 0 && date && (type === "transfer" ? (fromWalletId && toWalletId && fromWalletId !== toWalletId) : walletId);
+  const canSubmit = parseRupiahInput(amount) > 0 && date && (type === "salary" ? true : type === "transfer" ? (fromWalletId && toWalletId && fromWalletId !== toWalletId) : walletId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{title}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
         </div>
-        <div className="flex bg-white/[0.04] rounded-lg p-1 mb-5">
-          {["expense", "income", "transfer"].map((t) => (
-            <button key={t} onClick={() => setType(t)} className={`flex-1 py-2 rounded-md text-[13px] font-medium ${type === t ? "bg-lime text-black" : "text-white/50"}`}>
-              {t === "expense" ? "Pengeluaran" : t === "income" ? "Pemasukan" : "Transfer"}
+        
+        <div className="flex gap-1 bg-white/[0.04] rounded-lg p-1 mb-5 overflow-x-auto">
+          {[
+            { id: "expense", label: "Keluar" },
+            { id: "income", label: "Masuk" },
+            { id: "salary", label: "Gaji" },
+            { id: "transfer", label: "Transfer" },
+          ].map((t) => (
+            <button key={t.id} onClick={() => setType(t.id)} className={`flex-1 py-2 px-3 rounded-md text-xs font-medium whitespace-nowrap transition ${type === t.id ? "bg-lime text-black font-semibold" : "text-white/50 hover:text-white"}`}>
+              {t.label}
             </button>
           ))}
         </div>
-        <label className="text-[11px] text-white/40 font-medium">Tanggal Transaksi</label>
+
+        <label className="text-[11px] text-white/40 font-medium">Tanggal {type === "salary" ? "Gajian" : "Transaksi"}</label>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime text-white" />
-        <label className="text-[11px] text-white/40 font-medium">Jumlah</label>
+        
+        <label className="text-[11px] text-white/40 font-medium">{type === "salary" ? "Total Gaji (Rp)" : "Jumlah (Rp)"}</label>
         <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
 
         {type === "expense" && (
@@ -2238,7 +2777,7 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
               </div>
             </div>
           </div>
-        ) : (
+        ) : type === "salary" ? null : (
           <>
             <label className="text-[11px] text-white/40 font-medium">Dompet</label>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-1.5 mb-5">
@@ -2249,9 +2788,133 @@ function TransactionSheet({ wallets, title, defaultType, initialData, onClose, o
           </>
         )}
 
-        <label className="text-[11px] text-white/40 font-medium">Catatan (opsional)</label>
-        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan transaksi" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
-        <button disabled={!canSubmit} onClick={() => onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan</button>
+        {type !== "salary" && (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Catatan (opsional)</label>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan transaksi" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xs outline-none focus-lime" />
+          </>
+        )}
+
+        <button 
+          disabled={!canSubmit} 
+          onClick={() => {
+            if (type === "salary") {
+              onSalarySubmit({ amount: parseRupiahInput(amount), date, walletId: primaryWalletId || wallets[0]?.id });
+            } else {
+              onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date });
+            }
+          }} 
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2 text-xs"
+        >
+          Simpan {type === "salary" ? "Gaji" : "Transaksi"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddWishlistItemSheet({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [link, setLink] = useState("");
+  const canSubmit = name.trim() && parseRupiahInput(price) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Barang Wishlist</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <label className="text-[11px] text-white/40 font-medium">Nama barang</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Shifter" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" autoFocus />
+        
+        <label className="text-[11px] text-white/40 font-medium">Harga</label>
+        <input type="text" inputMode="numeric" value={price} onChange={(e) => setPrice(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+        
+        <label className="text-[11px] text-white/40 font-medium">Link Marketplace (Opsional)</label>
+        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://shopee.co.id/..." className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xs outline-none focus-lime" />
+
+        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), price: parseRupiahInput(price), link: link.trim() })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Barang</button>
+      </div>
+    </div>
+  );
+}
+
+function AddTaskSheet({ onClose, onSubmit, initialData }) {
+  const [title, setTitle] = useState(initialData?.title || "");
+  const [description, setDescription] = useState(initialData?.description || "");
+  const [priority, setPriority] = useState(initialData?.priority || "medium");
+  const [dueDate, setDueDate] = useState(initialData?.dueDate || "");
+  const [subtasks, setSubtasks] = useState(
+    initialData?.subtasks?.map((s) => ({ ...s })) || []
+  );
+  const [subtaskInput, setSubtaskInput] = useState("");
+
+  const canSubmit = title.trim();
+
+  function addSubtaskDraft() {
+    if (!subtaskInput.trim()) return;
+    setSubtasks((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), text: subtaskInput.trim(), done: false }
+    ]);
+    setSubtaskInput("");
+  }
+
+  function removeSubtaskDraft(idx) {
+    setSubtasks((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{initialData ? "Edit Tugas" : "Tugas Baru"}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Judul Tugas</label>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="mis. Bayar tagihan listrik" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" autoFocus />
+
+        <label className="text-[11px] text-white/40 font-medium">Deskripsi (opsional)</label>
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detail tambahan..." rows={2} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime resize-none" />
+
+        <label className="text-[11px] text-white/40 font-medium">Prioritas</label>
+        <div className="flex gap-2 mt-1.5 mb-4">
+          {PRIORITIES.map((p) => (
+            <button key={p.id} onClick={() => setPriority(p.id)} className="flex-1 py-2.5 rounded-lg text-xs font-medium border transition" style={priority === p.id ? { backgroundColor: p.color, borderColor: p.color, color: "#0C0D0F" } : { backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)" }}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tenggat Waktu (opsional)</label>
+        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+
+        <label className="text-[11px] text-white/40 font-medium">Sub-Tugas / Checklist (opsional)</label>
+        <div className="flex gap-2 mt-1.5 mb-2">
+          <input
+            value={subtaskInput}
+            onChange={(e) => setSubtaskInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubtaskDraft(); } }}
+            placeholder="mis. Cek nominal tagihan"
+            className="flex-1 bg-white/[0.04] rounded-lg px-3 py-2.5 text-xs outline-none focus-lime"
+          />
+          <button onClick={addSubtaskDraft} className="bg-white/10 text-white px-3 rounded-lg text-xs font-medium">Tambah</button>
+        </div>
+        {subtasks.length > 0 && (
+          <div className="space-y-1.5 mb-6">
+            {subtasks.map((s, idx) => (
+              <div key={s.id || idx} className="flex items-center justify-between bg-white/[0.03] rounded-lg px-3 py-2">
+                <span className={`text-xs truncate ${s.done ? "line-through text-white/30" : "text-white/70"}`}>{s.text}</span>
+                <button onClick={() => removeSubtaskDraft(idx)} className="text-white/30 hover:text-coral shrink-0 ml-2"><X size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button disabled={!canSubmit} onClick={() => onSubmit({ title: title.trim(), description: description.trim(), priority, dueDate, subtasks })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2">Simpan Tugas</button>
       </div>
     </div>
   );
@@ -2269,45 +2932,6 @@ function AddWalletSheet({ onClose, onSubmit }) {
         <label className="text-[11px] text-white/40 font-medium">Nama dompet</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Rekening BCA" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
         <button disabled={!name.trim()} onClick={() => onSubmit(name.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Dompet</button>
-      </div>
-    </div>
-  );
-}
-
-function SingleFieldSheet({ title, label, placeholder, submitLabel, onClose, onSubmit }) {
-  const [value, setValue] = useState("");
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">{title}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">{label}</label>
-        <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={placeholder} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
-        <button disabled={!value.trim()} onClick={() => onSubmit(value.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">{submitLabel}</button>
-      </div>
-    </div>
-  );
-}
-
-function AddWishlistItemSheet({ onClose, onSubmit }) {
-  const [name, setName] = useState("");
-  const [price, setPrice] = useState("");
-  const canSubmit = name.trim() && parseRupiahInput(price) > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Tambah Barang</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">Nama barang</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Shifter" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime" />
-        <label className="text-[11px] text-white/40 font-medium">Harga</label>
-        <input type="text" inputMode="numeric" value={price} onChange={(e) => setPrice(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus:border-lime" />
-        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), price: parseRupiahInput(price) })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Barang</button>
       </div>
     </div>
   );
@@ -2356,7 +2980,7 @@ function AddOvertimeSheet({ onClose, onSubmit, initialData }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{initialData ? "Edit Lembur" : "Catat Lembur"}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2414,7 +3038,7 @@ function AddGoalSheet({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">Tambah Target Tabungan</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2462,6 +3086,244 @@ function EditGoalCard({ goal, onSave, onCancel }) {
       <button onClick={() => onSave({ name: name.trim(), target: parseRupiahInput(target), saved: parseRupiahInput(saved) })} className="w-full bg-lime text-black font-semibold rounded py-2 text-xs flex items-center justify-center gap-1">
         <Check size={14} /> Simpan Perubahan
       </button>
+    </div>
+  );
+}
+
+function SingleFieldSheet({ title, label, placeholder, submitLabel, initialValue, onClose, onSubmit }) {
+  const [value, setValue] = useState(initialValue || "");
+  const canSubmit = value.trim().length > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{title}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <label className="text-[11px] text-white/40 font-medium">{label}</label>
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) onSubmit(value.trim()); }}
+          placeholder={placeholder}
+          className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime"
+        />
+        <button disabled={!canSubmit} onClick={() => onSubmit(value.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">
+          {submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TopUpGoalSheet({ goal, onClose, onSubmit }) {
+  const [amount, setAmount] = useState("");
+  const canSubmit = parseRupiahInput(amount) > 0;
+  const projected = goal.saved + parseRupiahInput(amount);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Tabungan</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <div className="flex items-center gap-2 mb-5 text-sm text-white/60">
+          <PiggyBank size={15} className="text-lime shrink-0" />
+          <span className="truncate">{goal.name}</span>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Jumlah Tambahan (Rp)</label>
+        <input
+          autoFocus
+          type="text"
+          inputMode="numeric"
+          value={amount}
+          onChange={(e) => setAmount(formatRupiahInput(e.target.value))}
+          placeholder="0"
+          className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime"
+        />
+
+        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4 mb-6">
+          <div className="flex justify-between text-xs text-white/40 mb-1">
+            <span>Setelah top up</span>
+            <span>Target</span>
+          </div>
+          <div className="flex justify-between text-sm font-medium tabular">
+            <span className={projected >= goal.target ? "text-lime" : "text-white"}>{rupiah(projected)}</span>
+            <span className="text-white/50">{rupiah(goal.target)}</span>
+          </div>
+          <div className="h-[4px] bg-white/10 overflow-hidden rounded-full mt-2.5">
+            <div className="h-full bg-lime transition-all rounded-full" style={{ width: `${Math.min(100, (projected / Math.max(1, goal.target)) * 100)}%` }} />
+          </div>
+        </div>
+
+        <button disabled={!canSubmit} onClick={() => onSubmit(parseRupiahInput(amount))} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">
+          Simpan Tabungan
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddSpaylaterSheet({ wallets, primaryWalletId, onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [totalAmount, setTotalAmount] = useState("");
+  const [tenor, setTenor] = useState(3);
+  const [purchaseDate, setPurchaseDate] = useState(todayKey());
+  const [walletId, setWalletId] = useState(primaryWalletId || wallets[0]?.id);
+
+  const TENOR_OPTIONS = [1, 3, 6, 12];
+  const canSubmit = name.trim() && parseRupiahInput(totalAmount) > 0 && Number(tenor) > 0 && purchaseDate && walletId;
+  const monthlyPreview = Number(tenor) > 0 ? Math.round(parseRupiahInput(totalAmount) / Number(tenor)) : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Catat Cicilan SPayLater</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama Barang / Transaksi</label>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. iPhone Case" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Total Harga (Rp)</label>
+        <input type="text" inputMode="numeric" value={totalAmount} onChange={(e) => setTotalAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Tenor</label>
+        <div className="grid grid-cols-4 gap-2 mt-1.5 mb-4">
+          {TENOR_OPTIONS.map((t) => (
+            <button key={t} onClick={() => setTenor(t)} className={`py-2.5 rounded-lg text-xs font-medium border transition ${tenor === t ? "bg-lime text-black border-lime font-bold" : "bg-white/[0.03] border-white/10 text-white/70 hover:bg-white/[0.06]"}`}>
+              {t} Bln
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tanggal Pembelian</label>
+        <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+
+        <label className="text-[11px] text-white/40 font-medium">Potong dari Dompet (saat dibayar)</label>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-1.5 mb-4">
+          {wallets.map((w) => (
+            <button key={w.id} onClick={() => setWalletId(w.id)} className={`truncate rounded-lg px-3 py-2 text-xs font-medium border ${walletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
+          ))}
+        </div>
+
+        {monthlyPreview > 0 && (
+          <div className="text-[11px] text-white/40 mb-6">
+            Cicilan per bulan: <span className="text-lime font-medium tabular">{rupiah(monthlyPreview)}</span>
+          </div>
+        )}
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit({ name: name.trim(), totalAmount: parseRupiahInput(totalAmount), tenor: Number(tenor), purchaseDate, walletId })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
+        >
+          Simpan Cicilan
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddRoutineSheet({ initialData, onClose, onSubmit }) {
+  const [name, setName] = useState(initialData?.name || "");
+  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
+  const [startIndex, setStartIndex] = useState(initialData?.startIndex ?? new Date().getMonth());
+
+  const canSubmit = name.trim() && parseRupiahInput(amount) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{initialData ? "Edit Pengeluaran Rutin" : "Tambah Pengeluaran Rutin"}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama</label>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Langganan Netflix" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Jumlah per Bulan (Rp)</label>
+        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        {!initialData && (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Mulai Bulan</label>
+            <div className="grid grid-cols-3 gap-2 mt-1.5 mb-6">
+              {MONTHS.map((m, idx) => (
+                <button
+                  key={m}
+                  onClick={() => setStartIndex(idx)}
+                  className={`py-2 rounded-lg text-[11px] font-medium border transition ${startIndex === idx ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/60"}`}
+                >
+                  {m.slice(0, 3)}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit(initialData ? { name: name.trim(), amount: parseRupiahInput(amount) } : { name: name.trim(), amount: parseRupiahInput(amount), startIndex })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
+        >
+          Simpan Rutin
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RoutineStopSheet({ item, onClose, onStop }) {
+  const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
+  const [stopIndex, setStopIndex] = useState(Math.max(startIdx, new Date().getMonth()));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Stop "{item.name}"</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <p className="text-xs text-white/50 mb-4 leading-relaxed">
+          Pilih bulan terakhir pengeluaran ini masih aktif. Setelah bulan itu, pos rutin ini tidak akan lagi dihitung — termasuk di tahun-tahun berikutnya.
+        </p>
+
+        <label className="text-[11px] text-white/40 font-medium">Aktif Sampai Bulan</label>
+        <div className="grid grid-cols-3 gap-2 mt-1.5 mb-6">
+          {MONTHS.map((m, idx) => {
+            const disabled = idx < startIdx;
+            return (
+              <button
+                key={m}
+                disabled={disabled}
+                onClick={() => setStopIndex(idx)}
+                className={`py-2 rounded-lg text-[11px] font-medium border transition ${
+                  disabled
+                    ? "opacity-25 cursor-not-allowed bg-white/[0.02] border-white/5 text-white/30"
+                    : stopIndex === idx
+                    ? "bg-coral text-black border-coral font-bold"
+                    : "bg-white/[0.03] border-white/10 text-white/60"
+                }`}
+              >
+                {m.slice(0, 3)}
+              </button>
+            );
+          })}
+        </div>
+
+        <button onClick={() => onStop(stopIndex)} className="w-full bg-coral text-black font-bold rounded-lg py-3.5">
+          Konfirmasi Stop di {MONTHS[stopIndex]}
+        </button>
+      </div>
     </div>
   );
 }
