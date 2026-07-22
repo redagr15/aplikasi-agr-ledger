@@ -8,6 +8,8 @@ import {
   X,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
   Sparkles,
   Trash2,
   Target,
@@ -24,6 +26,7 @@ import {
   ArrowRightLeft,
   History,
   RotateCcw,
+  Filter,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -279,6 +282,11 @@ export default function AgrLedgerApp() {
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [routineEditListMode, setRoutineEditListMode] = useState(false);
   const [routineStopTarget, setRoutineStopTarget] = useState(null);
+  const [isRoutineCollapsed, setIsRoutineCollapsed] = useState(false); // State utk expand/collapse Rutin
+
+  // State untuk pencarian & sort SPayLater
+  const [spaySearch, setSpaySearch] = useState("");
+  const [spaySort, setSpaySort] = useState("default");
 
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [editingGoalId, setEditingGoalId] = useState(null);
@@ -413,13 +421,6 @@ export default function AgrLedgerApp() {
     };
     reader.onerror = () => showError("Gagal membaca file.");
     reader.readAsText(file);
-  }
-
-  function handleImportFileChange(e) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    requestConfirm("Timpa Data?", "Mengimpor file ini akan mengganti seluruh data Ledger saat ini.", () => importDataFromFile(file));
   }
 
   const totals = useMemo(() => {
@@ -1237,6 +1238,27 @@ export default function AgrLedgerApp() {
       });
   }, [data]);
 
+  // UseMemo untuk memproses SPayLater: Cari dan Sortir
+  const activeSpaylaterList = useMemo(() => {
+    let list = [...(data?.spaylater?.filter(item => !item.isFinished) || [])];
+
+    if (spaySearch) {
+      list = list.filter(item => item.name.toLowerCase().includes(spaySearch.toLowerCase()));
+    }
+
+    list.sort((a, b) => {
+      if (spaySort === "name_asc") return a.name.localeCompare(b.name);
+      if (spaySort === "name_desc") return b.name.localeCompare(a.name);
+      if (spaySort === "price_desc") return b.totalAmount - a.totalAmount;
+      if (spaySort === "price_asc") return a.totalAmount - b.totalAmount;
+      if (spaySort === "tenor_desc") return b.tenor - a.tenor;
+      if (spaySort === "tenor_asc") return a.tenor - b.tenor;
+      return 0; // Default (newest / default order)
+    });
+
+    return list;
+  }, [data?.spaylater, spaySearch, spaySort]);
+
   if (!loaded || !data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-ink">
@@ -1267,6 +1289,7 @@ export default function AgrLedgerApp() {
         .cta-shadow { box-shadow: 0 8px 30px -8px rgba(200,255,77,0.5); }
         input[type=checkbox].accent-lime { accent-color: #C8FF4D; }
         input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
+        select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
       `}</style>
 
       <div className="w-full max-w-md md:max-w-5xl mx-auto px-5 md:px-8 pt-7 pb-32">
@@ -1728,72 +1751,115 @@ export default function AgrLedgerApp() {
               </table>
             </div>
 
-            {/* List Pengeluaran Rutin */}
+            {/* List Pengeluaran Rutin (Dengan Fitur Collapse/Minimize) */}
             <div className="pt-8 border-t border-white/10 mb-10">
               <div className="flex items-center justify-between mb-6">
-                <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
+                <div 
+                  className="flex items-center gap-2 cursor-pointer group hover:bg-white/5 px-2 py-1 -ml-2 rounded-lg transition"
+                  onClick={() => setIsRoutineCollapsed(!isRoutineCollapsed)}
+                >
+                  <SectionLabel noMargin>List Pengeluaran Rutin ({data.activeYear})</SectionLabel>
+                  {isRoutineCollapsed ? (
+                    <ChevronDown size={14} className="text-white/40 group-hover:text-white transition" />
+                  ) : (
+                    <ChevronUp size={14} className="text-white/40 group-hover:text-white transition" />
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setRoutineEditListMode(prev => !prev)} className={`text-xs border rounded-lg px-3 py-2 flex items-center gap-1.5 transition ${routineEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
-                    <Edit2 size={13} /> {routineEditListMode ? "Selesai Edit" : "Edit List"}
+                    <Edit2 size={13} /> {routineEditListMode ? "Selesai" : "Edit List"}
                   </button>
-                  <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah Rutin</button>
+                  <button onClick={() => setShowAddRoutine(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Tambah</button>
                 </div>
               </div>
 
-              {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
+              {!isRoutineCollapsed && (
+                <>
+                  {currentYearRoutineEntries.length === 0 && <EmptyRow>Belum ada pengeluaran rutin tahun ini.</EmptyRow>}
+                  <div className="space-y-3">
+                    {currentYearRoutineEntries.map((e) => {
+                      const startIdx = e.startIndex !== undefined ? Number(e.startIndex) : 0;
+                      const stopIdx = e.stopIndex !== undefined ? Number(e.stopIndex) : 11;
+                      const statusText = stopIdx === 11 ? `Mulai ${MONTHS[startIdx]} (Aktif)` : `Aktif (${MONTHS[startIdx]} s.d ${MONTHS[stopIdx]})`;
 
-              <div className="space-y-3">
-                {currentYearRoutineEntries.map((e) => {
-                  const startIdx = e.startIndex !== undefined ? Number(e.startIndex) : 0;
-                  const stopIdx = e.stopIndex !== undefined ? Number(e.stopIndex) : 11;
-                  const statusText = stopIdx === 11 ? `Mulai ${MONTHS[startIdx]} (Aktif)` : `Aktif (${MONTHS[startIdx]} s.d ${MONTHS[stopIdx]})`;
-
-                  return (
-                    <div key={e.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-sm mb-1 truncate">{e.name}</div>
-                        <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
-                        <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
-                      </div>
-                      {routineEditListMode && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400 hover:text-yellow-300 px-2.5 py-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs font-medium transition" title="Stop">Stop</button>
-                          <button onClick={() => setEditingRoutine(e)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={14} /></button>
-                          <button onClick={() => requestConfirm("Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={14} /></button>
+                      return (
+                        <div key={e.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4 flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-sm mb-1 truncate">{e.name}</div>
+                            <div className="text-[11px] text-white/40 mb-1">{statusText}</div>
+                            <div className="text-xs font-medium text-lime tabular">{rupiah(e.amount)} / bulan</div>
+                          </div>
+                          {routineEditListMode && (
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button onClick={() => setRoutineStopTarget(e)} className="text-yellow-400 hover:text-yellow-300 px-2.5 py-1.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs font-medium transition" title="Stop">Stop</button>
+                              <button onClick={() => setEditingRoutine(e)} className="text-white/70 hover:text-white p-2 border border-white/15 rounded-lg bg-white/5 transition" title="Edit"><Edit2 size={14} /></button>
+                              <button onClick={() => requestConfirm("Hapus Rutin?", "Pengeluaran rutin akan dihapus permanen.", () => deleteRoutineEntry(e.id))} className="text-coral hover:text-red-400 p-2 border border-coral/30 rounded-lg bg-coral/10 transition" title="Hapus"><Trash2 size={14} /></button>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="pt-8 border-t border-white/10">
-              <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center justify-between mb-4">
                 <SectionLabel noMargin>Tracker Cicilan SPayLater</SectionLabel>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setShowSpaylaterHistory(true)} className="text-xs text-white/70 border border-white/20 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-white/5 transition"><History size={13} /> Riwayat Selesai</button>
-                  <button onClick={() => setShowAddSpaylater(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat Cicilan</button>
+                  <button onClick={() => setShowSpaylaterHistory(true)} className="text-xs text-white/70 border border-white/20 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-white/5 transition"><History size={13} /> Riwayat</button>
+                  <button onClick={() => setShowAddSpaylater(true)} className="text-xs text-lime border border-lime/30 rounded-lg px-3 py-2 flex items-center gap-1.5 hover:bg-lime/5 transition"><Plus size={13} /> Catat</button>
                 </div>
               </div>
 
-              {(!data.spaylater || data.spaylater.filter(i => !i.isFinished).length === 0) && <EmptyRow>Belum ada tagihan SPayLater aktif.</EmptyRow>}
+              {/* Fitur Pencarian & Sortir SPayLater */}
+              <div className="flex flex-col md:flex-row gap-2.5 mb-6">
+                <div className="relative flex-1">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25" />
+                  <input
+                    value={spaySearch}
+                    onChange={(e) => setSpaySearch(e.target.value)}
+                    placeholder="Cari nama cicilan..."
+                    className="w-full bg-white/[0.04] border border-white/10 rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:border-lime placeholder:text-white/25 transition-colors text-white"
+                  />
+                </div>
+                <div className="relative shrink-0 w-full md:w-auto">
+                  <select
+                    value={spaySort}
+                    onChange={(e) => setSpaySort(e.target.value)}
+                    className="w-full md:w-auto pl-9 pr-8 py-2.5 bg-white/[0.04] border border-white/10 rounded-lg text-xs outline-none focus:border-lime text-white appearance-none cursor-pointer"
+                  >
+                    <option value="default" className="bg-surface">Urutan Default</option>
+                    <option value="name_asc" className="bg-surface">Nama (A - Z)</option>
+                    <option value="name_desc" className="bg-surface">Nama (Z - A)</option>
+                    <option value="price_desc" className="bg-surface">Harga Tertinggi</option>
+                    <option value="price_asc" className="bg-surface">Harga Terendah</option>
+                    <option value="tenor_desc" className="bg-surface">Tenor Terlama</option>
+                    <option value="tenor_asc" className="bg-surface">Tenor Tersingkat</option>
+                  </select>
+                  <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+                </div>
+              </div>
+
+              {activeSpaylaterList.length === 0 && <EmptyRow>Belum ada tagihan SPayLater aktif / ditemukan.</EmptyRow>}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {data.spaylater?.filter(item => !item.isFinished).map((item) => {
+                {activeSpaylaterList.map((item) => {
                   const monthlyPayment = item.totalAmount / item.tenor;
                   const paidMonthsCount = item.paidChecklist.filter(Boolean).length;
                   const remainingMonths = item.tenor - paidMonthsCount;
 
                   return (
-                    <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-5 transition">
+                    <div key={item.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-5 transition hover:bg-white/[0.05]">
                       <div className="flex justify-between items-start mb-4">
                         <div>
                           <div className="font-semibold text-sm mb-1">{item.name}</div>
                           <div className="text-[11px] text-white/40 tabular">Total: {rupiah(item.totalAmount)}</div>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <button onClick={() => toggleSpaylaterFinished(item.id)} className="text-[10px] px-2.5 py-1 rounded-lg border bg-lime/10 border-lime/30 text-lime hover:bg-lime/20">Finish</button>
+                          <button onClick={() => toggleSpaylaterFinished(item.id)} className="text-[10px] px-2.5 py-1 rounded-lg border bg-lime/10 border-lime/30 text-lime hover:bg-lime/20 font-medium">Finish</button>
                           <button onClick={() => requestConfirm("Hapus Cicilan?", "Cicilan akan dihapus dari daftar.", () => deleteSpaylater(item.id))} className="text-white/20 hover:text-coral p-1"><Trash2 size={15} /></button>
                         </div>
                       </div>
@@ -2106,7 +2172,7 @@ function TopUpGoalSheet({ goal, onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">Nabung: {goal.name}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
@@ -2129,7 +2195,7 @@ function AddRoutineSheet({ onClose, onSubmit, initialData }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <div className="font-semibold text-base">{initialData ? "Edit Rutin" : "Tambah Pengeluaran Rutin"}</div>
           <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
