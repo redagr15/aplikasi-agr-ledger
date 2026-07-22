@@ -297,6 +297,10 @@ export default function AgrLedgerApp() {
   const [editingWalletId, setEditingWalletId] = useState(null);
   const [editingWalletName, setEditingWalletName] = useState("");
 
+  // State baru untuk edit saldo dompet langsung
+  const [editingBalanceId, setEditingBalanceId] = useState(null);
+  const [editingBalanceValue, setEditingBalanceValue] = useState("");
+
   const [calendarDate, setCalendarDate] = useState(new Date());
 
   const [isDeleteMode, setIsDeleteMode] = useState(false);
@@ -426,6 +430,16 @@ export default function AgrLedgerApp() {
       requestConfirm("Timpa Data?", "Mengimpor file ini akan mengganti seluruh data Ledger saat ini.", () => importDataFromFile(file));
     }
     e.target.value = "";
+  }
+
+  // Fungsi baru untuk adjust saldo dompet langsung tanpa transaksi
+  function adjustWalletBalance(id, newBalance) {
+    setData((prev) => ({
+      ...prev,
+      wallets: prev.wallets.map((w) =>
+        w.id === id ? { ...w, balance: newBalance } : w
+      ),
+    }));
   }
 
   const totals = useMemo(() => {
@@ -1485,7 +1499,9 @@ export default function AgrLedgerApp() {
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 mb-9">
                   {data.wallets.map((w) => {
                     const isEditing = editingWalletId === w.id;
+                    const isEditingBalance = editingBalanceId === w.id;
                     const canDeleteWallet = data.wallets.length > 1;
+
                     return (
                       <div key={w.id} className="pl-3 pr-2 py-3 border-l-2 bg-white/[0.03] rounded-r-xl flex flex-col justify-between group" style={{ borderColor: w.color }}>
                         <div className="flex items-center justify-between mb-2">
@@ -1504,7 +1520,37 @@ export default function AgrLedgerApp() {
                             <button onClick={() => requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.`, () => deleteWallet(w.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"><Trash2 size={11} /></button>
                           )}
                         </div>
-                        <div className="font-medium text-sm tabular">{rupiah(w.balance)}</div>
+
+                        {/* Fitur Edit Saldo Dompet Langsung */}
+                        {isEditingBalance ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              autoFocus
+                              type="text"
+                              inputMode="numeric"
+                              value={editingBalanceValue}
+                              onChange={(e) => setEditingBalanceValue(formatRupiahInput(e.target.value))}
+                              className="w-full bg-white/10 text-sm px-1.5 py-0.5 rounded outline-none tabular text-lime font-medium"
+                            />
+                            <button
+                              onClick={() => {
+                                adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue));
+                                setEditingBalanceId(null);
+                              }}
+                              className="text-lime hover:scale-110"
+                            >
+                              <Check size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }}
+                            className="font-medium text-sm tabular cursor-pointer hover:text-lime transition"
+                            title="Klik untuk ubah saldo"
+                          >
+                            {rupiah(w.balance)}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
