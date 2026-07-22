@@ -282,9 +282,8 @@ export default function AgrLedgerApp() {
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [routineEditListMode, setRoutineEditListMode] = useState(false);
   const [routineStopTarget, setRoutineStopTarget] = useState(null);
-  const [isRoutineCollapsed, setIsRoutineCollapsed] = useState(false); // State utk expand/collapse Rutin
+  const [isRoutineCollapsed, setIsRoutineCollapsed] = useState(false);
 
-  // State untuk pencarian & sort SPayLater
   const [spaySearch, setSpaySearch] = useState("");
   const [spaySort, setSpaySort] = useState("default");
 
@@ -364,13 +363,11 @@ export default function AgrLedgerApp() {
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    const width = 288; // Ukuran width pop-up (w-72 = 288px)
+    const width = 288;
     let left = rect.left + rect.width / 2 - width / 2;
     left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
     
     let top = rect.bottom + 8;
-    
-    // Cegah pop-up tembus layar bawah dengan menampilkannya di atas baris
     if (window.innerHeight - top < 250) {
       top = Math.max(12, rect.top - Math.min(300, window.innerHeight / 2) - 8);
     }
@@ -1238,7 +1235,6 @@ export default function AgrLedgerApp() {
       });
   }, [data]);
 
-  // UseMemo untuk memproses SPayLater: Cari dan Sortir
   const activeSpaylaterList = useMemo(() => {
     let list = [...(data?.spaylater?.filter(item => !item.isFinished) || [])];
 
@@ -1253,7 +1249,7 @@ export default function AgrLedgerApp() {
       if (spaySort === "price_asc") return a.totalAmount - b.totalAmount;
       if (spaySort === "tenor_desc") return b.tenor - a.tenor;
       if (spaySort === "tenor_asc") return a.tenor - b.tenor;
-      return 0; // Default (newest / default order)
+      return 0;
     });
 
     return list;
@@ -1813,7 +1809,6 @@ export default function AgrLedgerApp() {
                 </div>
               </div>
 
-              {/* Fitur Pencarian & Sortir SPayLater */}
               <div className="flex flex-col md:flex-row gap-2.5 mb-6">
                 <div className="relative flex-1">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25" />
