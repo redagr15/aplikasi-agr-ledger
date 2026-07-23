@@ -86,6 +86,25 @@ const todayKey = () => {
   return `${year}-${month}-${day}`;
 };
 
+function computeNextRecurDate(day, fromISO) {
+  const from = fromISO ? new Date(fromISO + "T00:00:00") : new Date();
+  let y = from.getFullYear();
+  let m = from.getMonth();
+  const clampDay = (yy, mm, d) => Math.min(d, new Date(yy, mm + 1, 0).getDate());
+
+  let candidateDay = clampDay(y, m, day);
+  let candidate = new Date(y, m, candidateDay);
+  if (candidate < new Date(from.toDateString())) {
+    m += 1;
+    if (m > 11) { m = 0; y += 1; }
+    candidateDay = clampDay(y, m, day);
+    candidate = new Date(y, m, candidateDay);
+  }
+  const mm = String(m + 1).padStart(2, "0");
+  const dd = String(candidateDay).padStart(2, "0");
+  return `${y}-${mm}-${dd}`;
+}
+
 const formatDateID = (iso) => {
   if (!iso) return "-";
   try {
@@ -207,6 +226,8 @@ function migrateData(raw) {
     dueDate: t.dueDate || "",
     done: !!t.done,
     createdAt: t.createdAt || Date.now(),
+    recurring: !!t.recurring,
+    recurDay: t.recurDay || null,
     subtasks: Array.isArray(t.subtasks) ? t.subtasks.map(sub => ({
       id: sub.id || crypto.randomUUID(),
       text: sub.text || "",
@@ -551,7 +572,7 @@ export default function AgrLedgerApp() {
     setData((prev) => ({ ...prev, primaryWalletId: id }));
   }
 
-  function addTask({ title, description, priority, dueDate, subtasks }) {
+  function addTask({ title, description, priority, dueDate, subtasks, recurring, recurDay }) {
     setData((prev) => ({
       ...prev,
       tasks: [
@@ -560,9 +581,11 @@ export default function AgrLedgerApp() {
           title,
           description,
           priority,
-          dueDate,
+          dueDate: recurring ? computeNextRecurDate(recurDay) : dueDate,
           done: false,
           createdAt: Date.now(),
+          recurring: !!recurring,
+          recurDay: recurring ? Number(recurDay) : null,
           subtasks: subtasks.map((s) => ({ id: s.id || crypto.randomUUID(), text: s.text, done: !!s.done })),
         },
         ...prev.tasks,
@@ -586,6 +609,15 @@ export default function AgrLedgerApp() {
       ...prev,
       tasks: prev.tasks.map((t) => {
         if (t.id !== id) return t;
+        if (t.recurring) {
+          const nextDue = computeNextRecurDate(t.recurDay, t.dueDate);
+          return {
+            ...t,
+            done: false,
+            dueDate: nextDue,
+            subtasks: t.subtasks.map((s) => ({ ...s, done: false })),
+          };
+        }
         const newDone = !t.done;
         const newSubtasks = t.subtasks.map((s) => ({ ...s, done: newDone }));
         return { ...t, done: newDone, subtasks: newSubtasks };
@@ -2000,7 +2032,6 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Gaji (Manual jika kosong, Terkunci jika sudah diisi via Riwayat Gaji) */}
                           <td className="py-1.5 pr-3 text-right">
                             {(() => {
                               const salList = salaryByMonth[`${data.activeYear}-${index}`] || [];
@@ -2031,7 +2062,6 @@ export default function AgrLedgerApp() {
                             })()}
                           </td>
 
-                          {/* Gaji Tambahan */}
                           <td className="py-1.5 pr-3 text-right tabular text-teal">
                             {(() => {
                               const incList = gajiTambahanByMonth[`${data.activeYear}-${index}`] || [];
@@ -2052,7 +2082,6 @@ export default function AgrLedgerApp() {
                             })()}
                           </td>
 
-                          {/* Rutin */}
                           <td className="py-1.5 pr-3 text-right tabular text-white/80">
                             {row.rutin > 0 ? (
                               <span 
@@ -2066,7 +2095,6 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Cicilan */}
                           <td className="py-1.5 pr-3 text-right tabular text-white/80">
                             {row.cicilan > 0 ? (
                               <span 
@@ -2080,7 +2108,6 @@ export default function AgrLedgerApp() {
                             )}
                           </td>
 
-                          {/* Pengeluaran */}
                           <td className="py-1.5 pr-3 text-right tabular text-coral">
                             {row.pengeluaran > 0 ? (
                               <span 
@@ -2107,7 +2134,6 @@ export default function AgrLedgerApp() {
                 </table>
               </div>
 
-              {/* List Pengeluaran Rutin */}
               <div className="pt-8 border-t border-white/10 mb-10">
                 <div className="flex items-center justify-between mb-6">
                   <div 
@@ -2290,9 +2316,14 @@ export default function AgrLedgerApp() {
                         </button>
 
                         <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setExpandedTaskId(isExpanded ? null : t.id)}>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`font-medium text-sm truncate ${t.done ? "line-through text-white/40" : ""}`}>{t.title}</span>
-                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0" style={{ backgroundColor: prio.color + "26", color: prio.color }}>{prio.label}</span>
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className={`font-medium text-sm break-words ${t.done ? "line-through text-white/40" : ""}`}>{t.title}</span>
+                            <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                              {t.recurring && (
+                                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 bg-teal/20 text-teal">🔁 Rutin</span>
+                              )}
+                              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0" style={{ backgroundColor: prio.color + "26", color: prio.color }}>{prio.label}</span>
+                            </div>
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-white/40">
                             {t.dueDate && <span className={isOverdue ? "text-coral font-medium" : ""}>{formatDateID(t.dueDate)}</span>}
@@ -2697,6 +2728,8 @@ export default function AgrLedgerApp() {
               priority: payload.priority,
               dueDate: payload.dueDate,
               subtasks: payload.subtasks,
+              recurring: payload.recurring,
+              recurDay: payload.recurDay,
             });
             setEditingTask(null);
           }}
@@ -2846,6 +2879,8 @@ function AddTaskSheet({ onClose, onSubmit, initialData }) {
   const [description, setDescription] = useState(initialData?.description || "");
   const [priority, setPriority] = useState(initialData?.priority || "medium");
   const [dueDate, setDueDate] = useState(initialData?.dueDate || "");
+  const [recurring, setRecurring] = useState(!!initialData?.recurring);
+  const [recurDay, setRecurDay] = useState(initialData?.recurDay || new Date().getDate());
   const [subtasks, setSubtasks] = useState(
     initialData?.subtasks?.map((s) => ({ ...s })) || []
   );
@@ -2889,8 +2924,39 @@ function AddTaskSheet({ onClose, onSubmit, initialData }) {
           ))}
         </div>
 
-        <label className="text-[11px] text-white/40 font-medium">Tenggat Waktu (opsional)</label>
-        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+        <label className="text-[11px] text-white/40 font-medium flex items-center justify-between mb-1.5">
+          <span>Tugas Rutin Bulanan?</span>
+          <button
+            type="button"
+            onClick={() => setRecurring((v) => !v)}
+            className={`w-9 h-5 rounded-full transition relative ${recurring ? "bg-lime" : "bg-white/15"}`}
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition ${recurring ? "left-4" : "left-0.5"}`} />
+          </button>
+        </label>
+
+        {recurring ? (
+          <div className="mt-1.5 mb-4">
+            <div className="text-[11px] text-white/40 mb-1.5">Setiap tanggal berapa?</div>
+            <div className="grid grid-cols-7 gap-1.5">
+              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setRecurDay(d)}
+                  className={`py-2 rounded-md text-[10px] font-medium border ${recurDay === d ? "bg-lime text-black border-lime font-bold" : "bg-white/[0.03] border-white/10 text-white/60"}`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Tenggat Waktu (opsional)</label>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+          </>
+        )}
 
         <label className="text-[11px] text-white/40 font-medium">Sub-Tugas / Checklist (opsional)</label>
         <div className="flex gap-2 mt-1.5 mb-2">
@@ -2914,7 +2980,13 @@ function AddTaskSheet({ onClose, onSubmit, initialData }) {
           </div>
         )}
 
-        <button disabled={!canSubmit} onClick={() => onSubmit({ title: title.trim(), description: description.trim(), priority, dueDate, subtasks })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2">Simpan Tugas</button>
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit({ title: title.trim(), description: description.trim(), priority, dueDate, subtasks, recurring, recurDay })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2"
+        >
+          Simpan Tugas
+        </button>
       </div>
     </div>
   );
