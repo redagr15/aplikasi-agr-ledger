@@ -1,6 +1,7 @@
 import { supabase } from "./lib/supabaseClient";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import logoImg from "./assets/logo.png";
+import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
 import {
   Plus,
   TrendingUp,
@@ -31,6 +32,7 @@ import {
   AlertCircle,
   ExternalLink,
   Star,
+  FileText
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -404,6 +406,236 @@ function TaskCard({ t, isExpanded, onToggleExpand, onToggleDone, onToggleSubtask
   );
 }
 
+// PDF REPORT COMPONENTS
+
+const pdfStyles = StyleSheet.create({
+  page: { padding: 36, fontSize: 9, fontFamily: "Helvetica", color: "#1a1a1a" },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, borderBottom: "2 solid #C8FF4D", paddingBottom: 12 },
+  brand: { fontSize: 16, fontWeight: 700 },
+  brandSub: { fontSize: 8, color: "#666", marginTop: 2 },
+  periodBox: { textAlign: "right" },
+  periodLabel: { fontSize: 8, color: "#666", textTransform: "uppercase", letterSpacing: 1 },
+  periodValue: { fontSize: 13, fontWeight: 700, marginTop: 2 },
+  summaryGrid: { flexDirection: "row", gap: 8, marginBottom: 20 },
+  summaryCard: { flex: 1, backgroundColor: "#f4f6f0", padding: 10, borderRadius: 4, borderLeft: "3 solid #8BB828" },
+  summaryLabel: { fontSize: 7, color: "#666", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 },
+  summaryValue: { fontSize: 12, fontWeight: 700 },
+  sectionTitle: { fontSize: 10, fontWeight: 700, marginTop: 14, marginBottom: 6 },
+  table: { borderTop: "1 solid #ddd", borderLeft: "1 solid #ddd" },
+  tr: { flexDirection: "row", borderBottom: "1 solid #ddd" },
+  thCell: { flex: 1, padding: 5, backgroundColor: "#111", color: "#fff", fontSize: 8, fontWeight: 700, borderRight: "1 solid #ddd" },
+  tdCell: { flex: 1, padding: 5, fontSize: 8, borderRight: "1 solid #ddd" },
+  tdCellRight: { flex: 1, padding: 5, fontSize: 8, borderRight: "1 solid #ddd", textAlign: "right" },
+  totalRow: { flexDirection: "row", backgroundColor: "#f4f6f0", fontWeight: 700 },
+  footer: { position: "absolute", bottom: 20, left: 36, right: 36, flexDirection: "row", justifyContent: "space-between", fontSize: 7, color: "#999", borderTop: "1 solid #eee", paddingTop: 6 },
+});
+
+function MonthlyReportDocument({ year, monthIndex, detail, transactions, wallets }) {
+  const monthName = MONTHS[monthIndex];
+  const totalIncome = (detail.gaji || 0) + (detail.gajiTambahan || 0);
+  const totalExpense = (detail.rutin || 0) + (detail.cicilan || 0) + (detail.pengeluaran || 0);
+
+  const categoryBreakdown = CATEGORIES.map((c) => ({
+    ...c,
+    total: transactions.filter((t) => t.type === "expense" && t.category === c.id).reduce((s, t) => s + t.amount, 0),
+  })).filter((c) => c.total > 0).sort((a, b) => b.total - a.total);
+
+  const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || a.ts - b.ts);
+
+  return (
+    <Document title={`Laporan AGR Ledger ${monthName} ${year}`}>
+      <Page size="A4" style={pdfStyles.page} wrap>
+        <View style={pdfStyles.headerRow}>
+          <View>
+            <Text style={pdfStyles.brand}>AGR Ledger</Text>
+            <Text style={pdfStyles.brandSub}>Laporan Keuangan Bulanan</Text>
+          </View>
+          <View style={pdfStyles.periodBox}>
+            <Text style={pdfStyles.periodLabel}>Periode</Text>
+            <Text style={pdfStyles.periodValue}>{monthName} {year}</Text>
+          </View>
+        </View>
+
+        <View style={pdfStyles.summaryGrid}>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Saldo Awal</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(detail.resolvedSaldoAwal)}</Text>
+          </View>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Total Pemasukan</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(totalIncome)}</Text>
+          </View>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Total Pengeluaran</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(totalExpense)}</Text>
+          </View>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Saldo Akhir</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(detail.resolvedSaldoAkhir)}</Text>
+          </View>
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Rincian Pemasukan</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Keterangan</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Jumlah</Text>
+          </View>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.tdCell}>Gaji Pokok</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(detail.gaji)}</Text>
+          </View>
+          {(detail.gajiTambahanList || []).map((item, idx) => (
+            <View style={pdfStyles.tr} key={idx}>
+              <Text style={pdfStyles.tdCell}>{item.name}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(item.amount)}</Text>
+            </View>
+          ))}
+          <View style={pdfStyles.totalRow}>
+            <Text style={pdfStyles.tdCell}>Total Pemasukan</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(totalIncome)}</Text>
+          </View>
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Rutin & Cicilan</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Keterangan</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Jumlah</Text>
+          </View>
+          {(detail.rutinList || []).map((item, idx) => (
+            <View style={pdfStyles.tr} key={"r" + idx}>
+              <Text style={pdfStyles.tdCell}>{item.name} (Rutin)</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(item.amount)}</Text>
+            </View>
+          ))}
+          {(detail.cicilanList || []).map((item, idx) => (
+            <View style={pdfStyles.tr} key={"c" + idx}>
+              <Text style={pdfStyles.tdCell}>{item.name} (Cicilan {item.installment}/{item.tenor})</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(item.amount)}</Text>
+            </View>
+          ))}
+          {(detail.rutinList || []).length === 0 && (detail.cicilanList || []).length === 0 && (
+            <View style={pdfStyles.tr}><Text style={[pdfStyles.tdCell, { flex: 1.6 }]}>Tidak ada pos rutin/cicilan bulan ini.</Text></View>
+          )}
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Pengeluaran per Kategori</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Kategori</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Jumlah</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.4 }]}>%</Text>
+          </View>
+          {categoryBreakdown.map((c) => (
+            <View style={pdfStyles.tr} key={c.id}>
+              <Text style={pdfStyles.tdCell}>{c.emoji} {c.label}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(c.total)}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.4 }]}>{detail.pengeluaran > 0 ? ((c.total / detail.pengeluaran) * 100).toFixed(1) + "%" : "0%"}</Text>
+            </View>
+          ))}
+          {categoryBreakdown.length === 0 && (
+            <View style={pdfStyles.tr}><Text style={[pdfStyles.tdCell, { flex: 2 }]}>Tidak ada pengeluaran tercatat bulan ini.</Text></View>
+          )}
+          <View style={pdfStyles.totalRow}>
+            <Text style={pdfStyles.tdCell}>Total Pengeluaran Variabel</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(detail.pengeluaran)}</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.4 }]}></Text>
+          </View>
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Detail Transaksi ({sortedTx.length})</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={[pdfStyles.thCell, { flex: 0.5 }]}>Tanggal</Text>
+            <Text style={[pdfStyles.thCell, { flex: 1.3 }]}>Keterangan</Text>
+            <Text style={[pdfStyles.thCell, { flex: 0.7 }]}>Tipe</Text>
+            <Text style={[pdfStyles.thCell, { flex: 0.7, textAlign: "right" }]}>Jumlah</Text>
+          </View>
+          {sortedTx.map((t) => {
+            const cat = CATEGORIES.find((c) => c.id === t.category);
+            const label = t.type === "transfer" ? "Transfer" : t.type === "income" ? (t.note || "Pemasukan") : (t.note || cat?.label || "Pengeluaran");
+            const typeLabel = t.type === "transfer" ? "Transfer" : t.type === "income" ? "Masuk" : (cat?.label || "Keluar");
+            const sign = t.type === "transfer" ? "" : t.type === "income" ? "+" : "-";
+            return (
+              <View style={pdfStyles.tr} key={t.id}>
+                <Text style={[pdfStyles.tdCell, { flex: 0.5 }]}>{formatDateID(t.date)}</Text>
+                <Text style={[pdfStyles.tdCell, { flex: 1.3 }]}>{label}</Text>
+                <Text style={[pdfStyles.tdCell, { flex: 0.7 }]}>{typeLabel}</Text>
+                <Text style={[pdfStyles.tdCellRight, { flex: 0.7 }]}>{sign}{rupiah(t.amount)}</Text>
+              </View>
+            );
+          })}
+          {sortedTx.length === 0 && (
+            <View style={pdfStyles.tr}><Text style={[pdfStyles.tdCell, { flex: 3.2 }]}>Tidak ada transaksi tercatat bulan ini.</Text></View>
+          )}
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Saldo Dompet (Saat Laporan Dibuat)</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Dompet</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Saldo</Text>
+          </View>
+          {wallets.map((w) => (
+            <View style={pdfStyles.tr} key={w.id}>
+              <Text style={pdfStyles.tdCell}>{w.name}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(w.balance)}</Text>
+            </View>
+          ))}
+          <View style={pdfStyles.totalRow}>
+            <Text style={pdfStyles.tdCell}>Total Saldo</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(wallets.reduce((s, w) => s + w.balance, 0))}</Text>
+          </View>
+        </View>
+
+        <View style={pdfStyles.footer} fixed>
+          <Text>Dibuat otomatis oleh AGR Ledger • {new Date().toLocaleString("id-ID")}</Text>
+          <Text render={({ pageNumber, totalPages }) => `Halaman ${pageNumber} dari ${totalPages}`} />
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+function ReportPickerSheet({ years, defaultYear, defaultMonthIndex, generating, onClose, onGenerate }) {
+  const [year, setYear] = useState(defaultYear);
+  const [monthIndex, setMonthIndex] = useState(defaultMonthIndex);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Cetak Laporan Bulanan</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tahun</label>
+        <div className="grid grid-cols-4 gap-2 mt-1.5 mb-5">
+          {years.map((y) => (
+            <button key={y} onClick={() => setYear(y)} className={`py-2 rounded-lg text-xs font-medium border transition ${String(year) === String(y) ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/60"}`}>
+              {y}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Bulan</label>
+        <div className="grid grid-cols-3 gap-2 mt-1.5 mb-6">
+          {MONTHS.map((m, idx) => (
+            <button key={m} onClick={() => setMonthIndex(idx)} className={`py-2 rounded-lg text-[11px] font-medium border transition ${monthIndex === idx ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/60"}`}>
+              {m.slice(0, 3)}
+            </button>
+          ))}
+        </div>
+
+        <button disabled={generating} onClick={() => onGenerate(Number(year), monthIndex)} className="w-full bg-lime disabled:opacity-50 text-black font-semibold rounded-lg py-3.5 flex items-center justify-center gap-2">
+          {generating ? "Membuat PDF..." : (<><FileText size={15} /> Buat & Unduh PDF</>)}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AgrLedgerApp() {
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -469,6 +701,10 @@ export default function AgrLedgerApp() {
   const [activePopup, setActivePopup] = useState(null);
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
   const [showSalaryHistory, setShowSalaryHistory] = useState(false);
+
+  // PDF Report State
+  const [showReportPicker, setShowReportPicker] = useState(false);
+  const [reportGenerating, setReportGenerating] = useState(false);
 
   function handleTouchStart(e) {
     touchStartX.current = e.touches[0].clientX;
@@ -1003,6 +1239,102 @@ export default function AgrLedgerApp() {
     });
 
     return runningBal;
+  }
+
+  function computeMonthDetail(year, monthIndex) {
+    const yearStr = String(year);
+    if (!data.budgetYears[yearStr]) return null;
+  
+    const sortedYears = Object.keys(data.budgetYears).map(Number).sort((a, b) => a - b);
+    const yIdx = sortedYears.indexOf(Number(yearStr));
+  
+    let baseJanSaldo = 0;
+    if (yIdx > 0) {
+      baseJanSaldo = computeYearEndBalance(String(sortedYears[yIdx - 1]), data.budgetYears);
+    } else {
+      baseJanSaldo = data.budgetYears[yearStr].months[MONTHS[0]]?.saldoAwal || 0;
+    }
+  
+    const rawMonths = data.budgetYears[yearStr].months;
+    let runningBalance = baseJanSaldo;
+    let targetRow = null;
+  
+    for (let idx = 0; idx <= monthIndex; idx++) {
+      const m = MONTHS[idx];
+      const spaylaterList = spaylaterByMonth[`${yearStr}-${idx}`] || [];
+      const totalCicilan = spaylaterList.reduce((s, i) => s + i.amount, 0);
+      const expList = pengeluaranByMonth[`${yearStr}-${idx}`] || [];
+      const totalPengeluaran = expList.reduce((s, i) => s + i.amount, 0);
+      const incList = gajiTambahanByMonth[`${yearStr}-${idx}`] || [];
+      const totalGajiTambahan = incList.reduce((s, i) => s + i.amount, 0);
+      const totalLembur = overtimeAmountByMonth[`${yearStr}-${idx}`] || 0;
+      const rutList = routineByMonth[`${yearStr}-${idx}`] || [];
+      const totalRutin = rutList.reduce((s, i) => s + i.amount, 0);
+      const salList = salaryByMonth[`${yearStr}-${idx}`] || [];
+      const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
+      const finalGaji = rawGajiKotor > 0 ? Math.max(0, rawGajiKotor - totalLembur) : (rawMonths[m]?.gaji || 0);
+  
+      const row = {
+        ...(rawMonths[m] || { saldoAwal: 0, keterangan: "" }),
+        gaji: finalGaji,
+        cicilan: totalCicilan,
+        pengeluaran: totalPengeluaran,
+        gajiTambahan: totalGajiTambahan + totalLembur,
+        rutin: totalRutin,
+      };
+      const saldoAwalRow = idx === 0 ? baseJanSaldo : runningBalance;
+      const akhir = computeAkhir(row, saldoAwalRow);
+  
+      if (idx === monthIndex) {
+        targetRow = {
+          ...row,
+          resolvedSaldoAwal: saldoAwalRow,
+          resolvedSaldoAkhir: akhir,
+          cicilanList: spaylaterList,
+          pengeluaranList: expList,
+          gajiTambahanList: [
+            ...incList,
+            ...(totalLembur > 0 ? [{ id: "lembur", name: "Lembur", amount: totalLembur }] : []),
+          ],
+          rutinList: rutList,
+          salaryList: salList,
+        };
+      }
+      runningBalance = akhir;
+    }
+  
+    return targetRow;
+  }
+
+  async function handleGenerateReport(year, monthIndex) {
+    setReportGenerating(true);
+    try {
+      const detail = computeMonthDetail(year, monthIndex);
+      if (!detail) {
+        showError("Data bulan ini tidak ditemukan.");
+        return;
+      }
+      const prefix = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+      const monthTx = data.transactions.filter((t) => t.date && t.date.startsWith(prefix));
+  
+      const blob = await pdf(
+        <MonthlyReportDocument year={year} monthIndex={monthIndex} detail={detail} transactions={monthTx} wallets={data.wallets} />
+      ).toBlob();
+  
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `AGR-Ledger-Laporan-${MONTHS[monthIndex]}-${year}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setShowReportPicker(false);
+    } catch (err) {
+      showError("Gagal membuat laporan PDF.");
+    } finally {
+      setReportGenerating(false);
+    }
   }
 
   function addBudgetYear() {
@@ -1694,6 +2026,7 @@ export default function AgrLedgerApp() {
             <div className="text-[11px] text-white/35 mt-1">Precision Financial Tracking</div>
           </div>
           <div className="flex items-center gap-1">
+            <button onClick={() => setShowReportPicker(true)} className="w-8 h-8 flex items-center justify-center text-white/40 hover:text-lime active:scale-90 transition" title="Cetak laporan bulanan (PDF)"><FileText size={16} /></button>
             <button onClick={exportData} className="w-8 h-8 flex items-center justify-center text-white/40 hover:text-lime active:scale-90 transition" title="Ekspor data (.json)"><Download size={16} /></button>
             <button onClick={() => importInputRef.current?.click()} className="w-8 h-8 flex items-center justify-center text-white/40 hover:text-lime active:scale-90 transition" title="Impor data (.json)"><Upload size={16} /></button>
             <input ref={importInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFileChange} />
@@ -2670,6 +3003,17 @@ export default function AgrLedgerApp() {
             </div>
           </div>
         </div>
+      )}
+
+      {showReportPicker && (
+        <ReportPickerSheet
+          years={budgetYearsList}
+          defaultYear={data.activeYear}
+          defaultMonthIndex={new Date().getMonth()}
+          generating={reportGenerating}
+          onClose={() => setShowReportPicker(false)}
+          onGenerate={handleGenerateReport}
+        />
       )}
 
       {activePopup && (
