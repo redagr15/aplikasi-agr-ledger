@@ -66,11 +66,8 @@ const MONTHS = [
 
 const TAB_ORDER = ["home", "budget", "tasks", "wishlist", "lembur"];
 
-const rupiah = (n) => {
-  const isNegative = n < 0;
-  const absN = Math.abs(n || 0);
-  return (isNegative ? "-Rp" : "Rp") + Math.round(absN).toLocaleString("id-ID");
-};
+const rupiah = (n) =>
+  "Rp" + Math.round(n || 0).toLocaleString("id-ID");
 
 const formatRupiahInput = (val) => {
   const raw = String(val || "").replace(/[^0-9]/g, "");
@@ -91,32 +88,17 @@ const todayKey = () => {
   return `${year}-${month}-${day}`;
 };
 
-// --- HELPER FUNCTION UNTUK BUDGET MINGGUAN ---
-function getWeekKey(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  const day = d.getDay();
+function getWeekRange(d = new Date()) {
+  const day = d.getDay(); // 0=Minggu, 1=Senin, dst.
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const monday = new Date(d);
   monday.setDate(d.getDate() + diffToMonday);
-  const y = monday.getFullYear();
-  const m = String(monday.getMonth() + 1).padStart(2, "0");
-  const dd = String(monday.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return { start: monday, end: sunday };
 }
-
-function computeWeeklyRemaining(weeklyBudget, weeklySpendMap, currentWeekKey) {
-  const keys = Object.keys(weeklySpendMap).filter((k) => k <= currentWeekKey).sort();
-  let carry = 0;
-  let remaining = weeklyBudget;
-  for (const key of keys) {
-    const available = weeklyBudget - carry;
-    const spent = weeklySpendMap[key];
-    remaining = available - spent;
-    carry = remaining < 0 ? -remaining : 0;
-  }
-  return remaining;
-}
-// ----------------------------------------------
 
 function computeNextRecurDate(day, fromISO) {
   const from = fromISO ? new Date(fromISO + "T00:00:00") : new Date();
@@ -167,7 +149,8 @@ const seedData = () => ({
   ],
   primaryWalletId: "w1",
   transactions: [],
-  weeklyBudget: 500000, // Diubah menjadi weeklyBudget
+  budgetLimit: 500000,
+  budgetPeriod: "monthly",
   goals: [
     { id: "g1", name: "Dana Darurat", target: 5000000, saved: 0 }
   ],
@@ -202,16 +185,17 @@ function migrateData(raw) {
     merged.primaryWalletId = merged.wallets[0]?.id || null;
   }
   
-  // Migrasi budget lama ke weeklyBudget
-  if (merged.monthlyBudget !== undefined && merged.weeklyBudget === undefined) {
-    merged.weeklyBudget = Math.round(merged.monthlyBudget / 4.345);
+  // Migrasi logika budget (dukungan untuk budget mingguan/bulanan)
+  if (merged.monthlyBudget !== undefined && merged.budgetLimit === undefined) {
+    merged.budgetLimit = merged.monthlyBudget;
     delete merged.monthlyBudget;
   }
-  if (merged.dailyBudget !== undefined && merged.weeklyBudget === undefined) {
-    merged.weeklyBudget = merged.dailyBudget * 7;
+  if (merged.dailyBudget !== undefined && merged.budgetLimit === undefined) {
+    merged.budgetLimit = merged.dailyBudget * 30;
     delete merged.dailyBudget;
   }
-  if (typeof merged.weeklyBudget !== "number") merged.weeklyBudget = seed.weeklyBudget;
+  if (typeof merged.budgetLimit !== "number") merged.budgetLimit = seed.budgetLimit;
+  if (!merged.budgetPeriod) merged.budgetPeriod = "monthly"; // default aman
 
   if (!merged.wishlistCategories) merged.wishlistCategories = [];
   else {
@@ -717,8 +701,8 @@ export default function AgrLedgerApp() {
   const [editingGoalId, setEditingGoalId] = useState(null);
   const [topUpGoal, setTopUpGoal] = useState(null);
 
-  const [isEditingWeeklyBudget, setIsEditingWeeklyBudget] = useState(false);
-  const [tempWeeklyBudget, setTempWeeklyBudget] = useState("");
+  const [isEditingBudgetLimit, setIsEditingBudgetLimit] = useState(false);
+  const [tempBudgetLimit, setTempBudgetLimit] = useState("");
 
   const [editingWalletId, setEditingWalletId] = useState(null);
   const [editingWalletName, setEditingWalletName] = useState("");
@@ -794,7 +778,7 @@ export default function AgrLedgerApp() {
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, [activePopup]);
-
+  
   useEffect(() => {
     if (!loaded || !data) return;
     const timeout = setTimeout(async () => {
@@ -977,29 +961,34 @@ export default function AgrLedgerApp() {
   }
 
   const totals = useMemo(() => {
-    if (!data) return { income: 0, expense: 0, balance: 0 };
-    let income = 0, expense = 0;
+    if (!data) return { income: 0, expense: 0, balance: 0, monthSpent: 0, weekSpent: 0 };
+    const currentMonthPrefix = new Date().toISOString().slice(0, 7);
+    const { start, end } = getWeekRange();
+
+    let income = 0, expense = 0, monthSpent = 0, weekSpent = 0;
     for (const t of data.transactions) {
       if (t.type === "transfer") continue;
       if (t.type === "income") income += t.amount;
       else expense += t.amount;
+
+      if (t.type === "expense" && t.date) {
+        if (t.date.startsWith(currentMonthPrefix)) {
+          monthSpent += t.amount;
+        }
+        const txDate = new Date(t.date + "T00:00:00");
+        if (txDate >= start && txDate <= end) {
+          weekSpent += t.amount;
+        }
+      }
     }
     const balance = data.wallets.reduce((s, w) => s + w.balance, 0);
-    return { income, expense, balance };
+    return { income, expense, balance, monthSpent, weekSpent };
   }, [data]);
 
-  const weeklySpendMap = useMemo(() => {
-    if (!data) return {};
-    const map = {};
-    for (const t of data.transactions) {
-      if (t.type !== "expense" || !t.date) continue;
-      const wk = getWeekKey(t.date);
-      map[wk] = (map[wk] || 0) + t.amount;
-    }
-    return map;
-  }, [data]);
-
-  const remainingWeek = data ? computeWeeklyRemaining(data.weeklyBudget, weeklySpendMap, getWeekKey(todayKey())) : 0;
+  const isWeekly = data?.budgetPeriod === "weekly";
+  const currentSpent = isWeekly ? totals.weekSpent : totals.monthSpent;
+  const remainingBudget = data ? Math.max(data.budgetLimit - currentSpent, 0) : 0;
+  const budgetRatio = data && data.budgetLimit > 0 ? Math.min(1, remainingBudget / data.budgetLimit) : 0;
 
   const categorySpend = useMemo(() => {
     if (!data) return [];
@@ -2114,7 +2103,7 @@ export default function AgrLedgerApp() {
                           strokeWidth="10"
                           strokeLinecap="round"
                           strokeDasharray={2 * Math.PI * 52}
-                          strokeDashoffset={2 * Math.PI * 52 * (1 - Math.max(0, Math.min(1, remainingWeek / Math.max(1, data.weeklyBudget))))}
+                          strokeDashoffset={2 * Math.PI * 52 * (1 - budgetRatio)}
                           style={{ transition: "stroke-dashoffset 0.5s ease" }}
                         />
                       </svg>
@@ -2125,17 +2114,25 @@ export default function AgrLedgerApp() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between mb-1.5">
-                        <div className="text-[11px] uppercase tracking-wider text-white/35 font-medium">Budget mingguan tersisa</div>
-                        {!isEditingWeeklyBudget ? (
-                          <button onClick={() => { setIsEditingWeeklyBudget(true); setTempWeeklyBudget(formatRupiahInput(data.weeklyBudget)); }} className="text-[10px] text-lime hover:underline flex items-center gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] uppercase tracking-wider text-white/35 font-medium">Budget tersisa</span>
+                          <button
+                            onClick={() => setData(prev => ({ ...prev, budgetPeriod: isWeekly ? "monthly" : "weekly" }))}
+                            className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-white/70 hover:bg-white/20 transition flex items-center gap-1 cursor-pointer"
+                          >
+                            {isWeekly ? "MINGGUAN" : "BULANAN"} <ArrowRightLeft size={9} />
+                          </button>
+                        </div>
+                        {!isEditingBudgetLimit ? (
+                          <button onClick={() => { setIsEditingBudgetLimit(true); setTempBudgetLimit(formatRupiahInput(data.budgetLimit)); }} className="text-[10px] text-lime hover:underline flex items-center gap-1 shrink-0">
                             <Edit2 size={10} /> Ubah
                           </button>
                         ) : null}
                       </div>
 
-                      {!isEditingWeeklyBudget ? (
-                        <div className={`font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate ${remainingWeek < 0 ? 'text-coral' : ''}`}>
-                          {rupiah(remainingWeek)}
+                      {!isEditingBudgetLimit ? (
+                        <div className="font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate">
+                          {rupiah(remainingBudget)}
                         </div>
                       ) : (
                         <div className="flex items-center gap-1 mb-2">
@@ -2143,20 +2140,20 @@ export default function AgrLedgerApp() {
                             autoFocus
                             type="text"
                             inputMode="numeric"
-                            value={tempWeeklyBudget}
-                            onChange={(e) => setTempWeeklyBudget(formatRupiahInput(e.target.value))}
+                            value={tempBudgetLimit}
+                            onChange={(e) => setTempBudgetLimit(formatRupiahInput(e.target.value))}
                             className="w-full bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular"
                           />
                           <button onClick={() => {
-                            const val = parseRupiahInput(tempWeeklyBudget);
-                            if (val > 0) setData((prev) => ({ ...prev, weeklyBudget: val }));
-                            setIsEditingWeeklyBudget(false);
+                            const val = parseRupiahInput(tempBudgetLimit);
+                            if (val > 0) setData((prev) => ({ ...prev, budgetLimit: val }));
+                            setIsEditingBudgetLimit(false);
                           }} className="text-lime hover:scale-110 bg-lime/10 p-1.5 rounded"><Check size={14} /></button>
                         </div>
                       )}
 
                       <div className="text-[11px] text-white/40 mb-3">
-                        Total Limit: <span className="text-white font-medium tabular">{rupiah(data.weeklyBudget)}</span>
+                        Total Limit: <span className="text-white font-medium tabular">{rupiah(data?.budgetLimit)}</span>
                       </div>
 
                       <div className="flex gap-4">
