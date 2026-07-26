@@ -3353,10 +3353,11 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
                   value={routineId}
                   onChange={(e) => setRoutineId(e.target.value)}
                   className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-2 text-sm outline-none focus-lime text-white"
+                  style={{ colorScheme: "dark" }}
                 >
-                  <option value="">Bukan pengeluaran rutin</option>
+                  <option value="" style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>Bukan pengeluaran rutin</option>
                   {activeRoutineOptions.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name} ({rupiah(r.amount)}/bulan)</option>
+                    <option key={r.id} value={r.id} style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>{r.name} ({rupiah(r.amount)}/bulan)</option>
                   ))}
                 </select>
                 <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
