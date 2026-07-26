@@ -212,6 +212,7 @@ function migrateData(raw) {
   else {
     merged.wishlistCategories = merged.wishlistCategories.map(cat => ({
       ...cat,
+      goalId: cat.goalId || null,
       items: Array.isArray(cat.items) ? cat.items.map(i => ({ ...i, link: i.link || "" })) : []
     }));
   }
@@ -684,6 +685,7 @@ export default function AgrLedgerApp() {
   const [filterCat, setFilterCat] = useState("all");
   const [wishlistFilter, setWishlistFilter] = useState("all");
   const [txEditListMode, setTxEditListMode] = useState(false);
+  const [showAllTx, setShowAllTx] = useState(false);
 
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
@@ -697,8 +699,9 @@ export default function AgrLedgerApp() {
   const [showAddRoutine, setShowAddRoutine] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [routineEditListMode, setRoutineEditListMode] = useState(false);
+  const [walletEditListMode, setWalletEditListMode] = useState(false);
   const [routineStopTarget, setRoutineStopTarget] = useState(null);
-  const [isRoutineCollapsed, setIsRoutineCollapsed] = useState(false);
+  const [isRoutineCollapsed, setIsRoutineCollapsed] = useState(true);
 
   const [spaySearch, setSpaySearch] = useState("");
   const [spaySort, setSpaySort] = useState("default");
@@ -780,6 +783,10 @@ export default function AgrLedgerApp() {
   useEffect(() => {
     setActivePopup(null);
   }, [activeTab]);
+
+  useEffect(() => {
+    setShowAllTx(false);
+  }, [filterCat]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -961,13 +968,25 @@ export default function AgrLedgerApp() {
     }));
   }
 
+  // Kalau kategori wishlist ini terhubung ke sebuah Target Tabungan (goalId), samakan nominal
+  // target-nya dengan total sisa keperluan (barang yang belum dibeli) di kategori itu.
+  function recalcGoalForCategory(state, catId) {
+    const cat = state.wishlistCategories.find((c) => c.id === catId);
+    if (!cat || !cat.goalId) return state;
+    const total = cat.items.filter((i) => !i.bought).reduce((s, i) => s + i.price, 0);
+    return {
+      ...state,
+      goals: state.goals.map((g) => (g.id === cat.goalId ? { ...g, target: total } : g)),
+    };
+  }
+
   function addWishlistItem(catId, { name, price, link }) {
-    setData((prev) => ({
-      ...prev,
-      wishlistCategories: prev.wishlistCategories.map((c) =>
+    setData((prev) => {
+      const wishlistCategories = prev.wishlistCategories.map((c) =>
         c.id === catId ? { ...c, items: [...c.items, { id: crypto.randomUUID(), name, price, link: link || "", bought: false }] } : c
-      ),
-    }));
+      );
+      return recalcGoalForCategory({ ...prev, wishlistCategories }, catId);
+    });
   }
 
   const totals = useMemo(() => {
@@ -994,8 +1013,10 @@ export default function AgrLedgerApp() {
         const isThisWeek = txDate >= start && txDate <= end;
 
         if (t.type === "expense") {
-          if (isThisMonth) monthSpent += t.amount;
-          if (isThisWeek) weekSpent += t.amount;
+          if (!t.routineId) { // pengeluaran rutin (biasanya nominal besar & tetap) tidak masuk plafon mingguan/bulanan
+            if (isThisMonth) monthSpent += t.amount;
+            if (isThisWeek) weekSpent += t.amount;
+          }
         } else if (t.type === "income") {
           if (isThisMonth) monthIncome += t.amount;
           if (isThisWeek) weekIncome += t.amount;
@@ -1574,35 +1595,41 @@ export default function AgrLedgerApp() {
   }, [data]);
 
   function addWishlistCategory(name) {
-    setData((prev) => ({
-      ...prev,
-      wishlistCategories: [...prev.wishlistCategories, { id: crypto.randomUUID(), name, items: [] }],
-    }));
+    setData((prev) => {
+      const goalId = crypto.randomUUID();
+      return {
+        ...prev,
+        wishlistCategories: [...prev.wishlistCategories, { id: crypto.randomUUID(), name, items: [], goalId }],
+        goals: [...prev.goals, { id: goalId, name, target: 0, saved: 0 }],
+      };
+    });
   }
 
   function deleteWishlistCategory(catId) {
     setData((prev) => ({
       ...prev,
       wishlistCategories: prev.wishlistCategories.filter((c) => c.id !== catId),
+      // Target Tabungan yang tadinya terhubung TIDAK ikut terhapus — jadi tetap ada, cuma
+      // berhenti sinkron otomatis (uang yang sudah ditabung ke situ tidak hilang).
     }));
   }
 
   function toggleWishlistBought(catId, itemId) {
-    setData((prev) => ({
-      ...prev,
-      wishlistCategories: prev.wishlistCategories.map((c) =>
+    setData((prev) => {
+      const wishlistCategories = prev.wishlistCategories.map((c) =>
         c.id === catId ? { ...c, items: c.items.map((i) => (i.id === itemId ? { ...i, bought: !i.bought } : i)) } : c
-      ),
-    }));
+      );
+      return recalcGoalForCategory({ ...prev, wishlistCategories }, catId);
+    });
   }
 
   function deleteWishlistItem(catId, itemId) {
-    setData((prev) => ({
-      ...prev,
-      wishlistCategories: prev.wishlistCategories.map((c) =>
+    setData((prev) => {
+      const wishlistCategories = prev.wishlistCategories.map((c) =>
         c.id === catId ? { ...c, items: c.items.filter((i) => i.id !== itemId) } : c
-      ),
-    }));
+      );
+      return recalcGoalForCategory({ ...prev, wishlistCategories }, catId);
+    });
   }
 
   function addSpaylater({ name, totalAmount, tenor, purchaseDate, walletId }) {
@@ -1905,6 +1932,18 @@ export default function AgrLedgerApp() {
     return { txCount, salaryCount, spaylaterCount, balance: wallet?.balance || 0 };
   }
 
+  function moveWallet(id, direction) {
+    setData((prev) => {
+      const idx = prev.wallets.findIndex((w) => w.id === id);
+      if (idx === -1) return prev;
+      const newIdx = direction === "left" ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= prev.wallets.length) return prev;
+      const wallets = [...prev.wallets];
+      [wallets[idx], wallets[newIdx]] = [wallets[newIdx], wallets[idx]];
+      return { ...prev, wallets };
+    });
+  }
+
   function updateWalletName(id, newName) {
     if (!newName.trim()) return;
     setData((prev) => ({
@@ -1924,7 +1963,11 @@ export default function AgrLedgerApp() {
   }
 
   function deleteGoal(id) {
-    setData((prev) => ({ ...prev, goals: prev.goals.filter((g) => g.id !== id) }));
+    setData((prev) => ({
+      ...prev,
+      goals: prev.goals.filter((g) => g.id !== id),
+      wishlistCategories: prev.wishlistCategories.map((c) => (c.goalId === id ? { ...c, goalId: null } : c)),
+    }));
   }
 
   const resolvedMonthsData = useMemo(() => {
@@ -2266,6 +2309,7 @@ export default function AgrLedgerApp() {
                           <div className="font-medium text-sm tabular">{rupiah(currentSpent)}</div>
                         </div>
                       </div>
+                      <div className="text-[10px] text-white/25 mt-2">Pengeluaran yang dikaitkan ke pos Rutin tidak dihitung di sini.</div>
 
                       <button onClick={() => setShowSalaryHistory(true)} className="mt-3 text-[10px] text-lime hover:underline flex items-center gap-1">
                         <History size={10} /> Riwayat Gaji Kotor
@@ -2319,18 +2363,28 @@ export default function AgrLedgerApp() {
                   <div className="mb-9 space-y-4">
                     {(!data.goals || data.goals.length === 0) && <EmptyRow>Belum ada target tabungan.</EmptyRow>}
                     {data.goals?.map((goal) => {
+                      const linkedCat = data.wishlistCategories.find((c) => c.goalId === goal.id);
                       if (editingGoalId === goal.id) {
-                        return <EditGoalCard key={goal.id} goal={goal} onSave={(updated) => updateGoal(goal.id, updated)} onCancel={() => setEditingGoalId(null)} />;
+                        return <EditGoalCard key={goal.id} goal={goal} lockTarget={!!linkedCat} onSave={(updated) => updateGoal(goal.id, updated)} onCancel={() => setEditingGoalId(null)} />;
                       }
                       return (
                         <div key={goal.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
                           <div className="flex items-center gap-2.5 mb-2">
                             <PiggyBank size={15} className="text-lime shrink-0" />
-                            <div className="text-sm font-medium truncate flex-1">{goal.name}</div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-medium truncate">{goal.name}</div>
+                              {linkedCat && (
+                                <div className="text-[10px] text-teal/80 flex items-center gap-1 mt-0.5">
+                                  <ExternalLink size={9} /> Tersambung ke Wishlist "{linkedCat.name}"
+                                </div>
+                              )}
+                            </div>
                             <div className="text-[11px] text-white/40 tabular shrink-0">{rupiah(goal.saved)} / {rupiah(goal.target)}</div>
                             <div className="flex items-center gap-1 ml-2">
                               <button onClick={() => setTopUpGoal(goal)} className="text-black bg-lime hover:scale-105 p-1 rounded transition mr-1" title="Tambah tabungan"><Plus size={13} strokeWidth={2.5} /></button>
-                              <button onClick={() => setEditingGoalId(goal.id)} className="text-white/30 hover:text-white p-1 transition"><Edit2 size={13} /></button>
+                              {!linkedCat && (
+                                <button onClick={() => setEditingGoalId(goal.id)} className="text-white/30 hover:text-white p-1 transition"><Edit2 size={13} /></button>
+                              )}
                               <button onClick={() => requestConfirm("Hapus Target?", `Target "${goal.name}" akan dihapus.`, () => deleteGoal(goal.id))} className="text-white/30 hover:text-coral p-1 transition"><Trash2 size={13} /></button>
                             </div>
                           </div>
@@ -2346,33 +2400,98 @@ export default function AgrLedgerApp() {
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <SectionLabel noMargin>Dompet</SectionLabel>
-                    <div className="text-[11px] text-white/35 tabular">{rupiah(totals.balance)} total</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-[11px] text-white/35 tabular">{rupiah(totals.balance)} total</div>
+                      <button onClick={() => setWalletEditListMode(prev => !prev)} className={`text-[11px] border rounded-lg px-2.5 py-1.5 flex items-center gap-1 transition ${walletEditListMode ? "bg-white/10 text-white border-white/30" : "text-white/70 border-white/20 hover:bg-white/5"}`}>
+                        <Edit2 size={12} /> {walletEditListMode ? "Selesai" : "Edit List"}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 mb-9">
-                    {data.wallets.map((w) => {
-                      const isEditing = editingWalletId === w.id;
-                      const isEditingBalance = editingBalanceId === w.id;
-                      const canDeleteWallet = data.wallets.length > 1;
-                      return (
-                        <div key={w.id} className="pl-3 pr-2 py-3 border-l-2 bg-white/[0.03] rounded-r-xl flex flex-col justify-between group" style={{ borderColor: w.color }}>
-                          <div className="flex items-center justify-between mb-2">
-                            {isEditing ? (
-                              <div className="flex items-center gap-1 w-full">
-                                <input autoFocus value={editingWalletName} onChange={(e) => setEditingWalletName(e.target.value)} className="w-full bg-white/10 text-xs px-1.5 py-0.5 rounded outline-none text-white" />
-                                <button onClick={() => updateWalletName(w.id, editingWalletName)} className="text-lime hover:scale-110"><Check size={13} /></button>
-                              </div>
-                            ) : (
-                              <div onClick={() => { setEditingWalletId(w.id); setEditingWalletName(w.name); }} className="text-[11px] text-white/60 hover:text-white truncate cursor-pointer flex items-center gap-1 group/name">
-                                {data.primaryWalletId === w.id && <Star size={10} className="text-lime shrink-0" fill="#C8FF4D" />}
-                                <span className="truncate">{w.name}</span>
-                                <Edit2 size={10} className="opacity-0 group-hover/name:opacity-100 transition shrink-0" />
-                              </div>
-                            )}
-                            <div className="flex items-center gap-1">
+                  {!walletEditListMode ? (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 mb-9">
+                      {data.wallets.map((w) => (
+                        <div key={w.id} className="pl-3 pr-2.5 py-3 border-l-2 bg-white/[0.03] rounded-r-xl" style={{ borderColor: w.color }}>
+                          <div className="text-[11px] text-white/60 truncate flex items-center gap-1 mb-1.5">
+                            {data.primaryWalletId === w.id && <Star size={10} className="text-lime shrink-0" fill="#C8FF4D" />}
+                            <span className="truncate">{w.name}</span>
+                          </div>
+                          <div className="font-medium text-sm tabular truncate">{rupiah(w.balance)}</div>
+                        </div>
+                      ))}
+                      <button onClick={() => setShowAddWallet(true)} className="min-h-[72px] flex flex-col items-center justify-center gap-1 text-white/30 hover:text-white/60 transition border-2 border-dashed border-white/15 rounded-xl">
+                        <Plus size={15} />
+                        <span className="text-[10px]">Dompet Baru</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 mb-9">
+                      {data.wallets.map((w) => {
+                        const isEditing = editingWalletId === w.id;
+                        const isEditingBalance = editingBalanceId === w.id;
+                        const canDeleteWallet = data.wallets.length > 1;
+                        const walletIdx = data.wallets.findIndex((x) => x.id === w.id);
+                        return (
+                          <div key={w.id} className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
+                            <div className="mb-3">
+                              {isEditing ? (
+                                <div className="flex items-center gap-1.5 mb-2">
+                                  <input autoFocus value={editingWalletName} onChange={(e) => setEditingWalletName(e.target.value)} className="w-full bg-white/10 text-sm px-2.5 py-1.5 rounded-lg outline-none text-white" />
+                                  <button onClick={() => updateWalletName(w.id, editingWalletName)} className="text-lime hover:scale-110 shrink-0 p-1"><Check size={16} /></button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 mb-1.5">
+                                  {data.primaryWalletId === w.id && <Star size={11} className="text-lime shrink-0" fill="#C8FF4D" />}
+                                  <span className="text-sm font-semibold truncate">{w.name}</span>
+                                </div>
+                              )}
+                              {isEditingBalance ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    autoFocus
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={editingBalanceValue}
+                                    onChange={(e) => setEditingBalanceValue(formatRupiahInput(e.target.value))}
+                                    className="w-full bg-white/10 text-sm px-2.5 py-1.5 rounded-lg outline-none tabular text-lime font-medium"
+                                  />
+                                  <button onClick={() => { adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue)); setEditingBalanceId(null); }} className="text-lime hover:scale-110 shrink-0 p-1"><Check size={16} /></button>
+                                </div>
+                              ) : (
+                                !isEditing && <div className="text-xs text-white/45 tabular">{rupiah(w.balance)}</div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center flex-wrap gap-1.5">
+                              {!isEditing && (
+                                <button onClick={() => { setEditingWalletId(w.id); setEditingWalletName(w.name); }} className="text-white/70 hover:text-white text-xs border border-white/15 bg-white/5 rounded-lg px-2.5 py-1.5 flex items-center gap-1 transition">
+                                  <Edit2 size={12} /> Nama
+                                </button>
+                              )}
+                              {!isEditingBalance && (
+                                <button onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }} className="text-white/70 hover:text-white text-xs border border-white/15 bg-white/5 rounded-lg px-2.5 py-1.5 flex items-center gap-1 transition">
+                                  Saldo
+                                </button>
+                              )}
+                              <button
+                                onClick={() => moveWallet(w.id, "left")}
+                                disabled={walletIdx === 0}
+                                className="text-white/70 hover:text-white border border-white/15 bg-white/5 rounded-lg p-1.5 transition disabled:opacity-25 disabled:cursor-default"
+                                title="Geser ke kiri"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <button
+                                onClick={() => moveWallet(w.id, "right")}
+                                disabled={walletIdx === data.wallets.length - 1}
+                                className="text-white/70 hover:text-white border border-white/15 bg-white/5 rounded-lg p-1.5 transition disabled:opacity-25 disabled:cursor-default"
+                                title="Geser ke kanan"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
                               {data.primaryWalletId !== w.id && (
-                                <button onClick={() => setPrimaryWallet(w.id)} className="text-white/0 group-hover:text-white/30 hover:text-lime transition p-0.5" title="Jadikan Dompet Utama">
-                                  <Star size={11} />
+                                <button onClick={() => setPrimaryWallet(w.id)} className="text-yellow-400 hover:text-yellow-300 border border-yellow-500/30 bg-yellow-500/10 rounded-lg p-1.5 transition" title="Jadikan Dompet Utama">
+                                  <Star size={14} />
                                 </button>
                               )}
                               {canDeleteWallet && (
@@ -2389,38 +2508,21 @@ export default function AgrLedgerApp() {
                                       : "";
                                     requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.${detail}`, () => deleteWallet(w.id));
                                   }}
-                                  className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"
+                                  className="text-coral hover:text-red-400 border border-coral/30 bg-coral/10 rounded-lg p-1.5 transition"
+                                  title="Hapus"
                                 >
-                                  <Trash2 size={11} />
+                                  <Trash2 size={14} />
                                 </button>
                               )}
                             </div>
                           </div>
-                          {isEditingBalance ? (
-                            <div className="flex items-center gap-1">
-                              <input
-                                autoFocus
-                                type="text"
-                                inputMode="numeric"
-                                value={editingBalanceValue}
-                                onChange={(e) => setEditingBalanceValue(formatRupiahInput(e.target.value))}
-                                className="w-full bg-white/10 text-sm px-1.5 py-0.5 rounded outline-none tabular text-lime font-medium"
-                              />
-                              <button onClick={() => { adjustWalletBalance(w.id, parseRupiahInput(editingBalanceValue)); setEditingBalanceId(null); }} className="text-lime hover:scale-110"><Check size={13} /></button>
-                            </div>
-                          ) : (
-                            <div onClick={() => { setEditingBalanceId(w.id); setEditingBalanceValue(formatRupiahInput(w.balance)); }} className="font-medium text-sm tabular cursor-pointer hover:text-lime transition" title="Klik untuk ubah saldo">
-                              {rupiah(w.balance)}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <button onClick={() => setShowAddWallet(true)} className="min-h-[72px] flex flex-col items-center justify-center gap-1 text-white/30 hover:text-white/60 transition border-2 border-dashed border-white/15 rounded-xl">
-                      <Plus size={15} />
-                      <span className="text-[10px]">Dompet Baru</span>
-                    </button>
-                  </div>
+                        );
+                      })}
+                      <button onClick={() => setShowAddWallet(true)} className="w-full py-3 flex items-center justify-center gap-1.5 text-white/40 hover:text-white/70 transition border-2 border-dashed border-white/15 rounded-xl text-xs">
+                        <Plus size={14} /> Dompet Baru
+                      </button>
+                    </div>
+                  )}
 
                   <SectionLabel>Pengeluaran per kategori</SectionLabel>
                   <div className="mb-9">
@@ -2452,7 +2554,7 @@ export default function AgrLedgerApp() {
                   </div>
                   <div>
                     {filteredTransactions.length === 0 && <EmptyRow>Belum ada transaksi.</EmptyRow>}
-                    {filteredTransactions.slice(0, 20).map((t) => {
+                    {(showAllTx ? filteredTransactions : filteredTransactions.slice(0, 20)).map((t) => {
                       const cat = CATEGORIES.find((c) => c.id === t.category);
                       const isTransfer = t.type === "transfer";
                       const fromW = data.wallets.find((w) => w.id === t.fromWalletId)?.name || "Dompet";
@@ -2483,6 +2585,18 @@ export default function AgrLedgerApp() {
                         </div>
                       );
                     })}
+                    {filteredTransactions.length > 20 && (
+                      <button
+                        onClick={() => setShowAllTx((prev) => !prev)}
+                        className="w-full mt-3 py-2.5 text-xs font-medium text-white/60 hover:text-white border border-white/10 hover:bg-white/[0.04] rounded-lg transition flex items-center justify-center gap-1.5"
+                      >
+                        {showAllTx ? (
+                          <>Sembunyikan <ChevronUp size={13} /></>
+                        ) : (
+                          <>Lihat semua ({filteredTransactions.length}) <ChevronDown size={13} /></>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3463,6 +3577,185 @@ function AddWishlistItemSheet({ onClose, onSubmit }) {
         <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://shopee.co.id/..." className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xs outline-none focus-lime" />
 
         <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), price: parseRupiahInput(price), link: link.trim() })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Barang</button>
+      </div>
+    </div>
+  );
+}
+
+function SingleFieldSheet({ title, label, placeholder, submitLabel, initialValue, onClose, onSubmit }) {
+  const [value, setValue] = useState(initialValue || "");
+  const canSubmit = value.trim().length > 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{title}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <label className="text-[11px] text-white/40 font-medium">{label}</label>
+        <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder={placeholder} onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) onSubmit(value.trim()); }} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
+        <button disabled={!canSubmit} onClick={() => onSubmit(value.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">{submitLabel || "Simpan"}</button>
+      </div>
+    </div>
+  );
+}
+
+function AddGoalSheet({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [target, setTarget] = useState("");
+  const [saved, setSaved] = useState("");
+  const canSubmit = name.trim() && parseRupiahInput(target) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Target Tabungan</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama target</label>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Dana Darurat" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Target Nominal (Rp)</label>
+        <input type="text" inputMode="numeric" value={target} onChange={(e) => setTarget(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Sudah Terkumpul (Opsional)</label>
+        <input type="text" inputMode="numeric" value={saved} onChange={(e) => setSaved(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit({ name: name.trim(), target: parseRupiahInput(target), saved: parseRupiahInput(saved) || 0 })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
+        >
+          Tambah Target
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TopUpGoalSheet({ goal, onClose, onSubmit }) {
+  const [amount, setAmount] = useState("");
+  const canSubmit = parseRupiahInput(amount) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Tabungan</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <div className="text-xs text-white/40 mb-4">
+          {goal.name} · sudah terkumpul <span className="text-white/70 tabular">{rupiah(goal.saved)}</span> dari {rupiah(goal.target)}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nominal ditambahkan (Rp)</label>
+        <input autoFocus type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <button disabled={!canSubmit} onClick={() => onSubmit(parseRupiahInput(amount))} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah</button>
+      </div>
+    </div>
+  );
+}
+
+function EditGoalCard({ goal, lockTarget, onSave, onCancel }) {
+  const [name, setName] = useState(goal.name);
+  const [target, setTarget] = useState(formatRupiahInput(goal.target));
+  const [saved, setSaved] = useState(formatRupiahInput(goal.saved));
+  const canSave = name.trim() && parseRupiahInput(target) > 0;
+
+  return (
+    <div className="bg-white/[0.03] border border-lime/30 rounded-xl p-4">
+      <label className="text-[10px] text-white/40 font-medium">Nama target</label>
+      <input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-white/[0.06] rounded-lg px-3 py-2 mt-1 mb-3 text-sm outline-none focus-lime" />
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label className="text-[10px] text-white/40 font-medium">Target (Rp)</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={target}
+            disabled={lockTarget}
+            onChange={(e) => setTarget(formatRupiahInput(e.target.value))}
+            className="w-full bg-white/[0.06] rounded-lg px-3 py-2 mt-1 text-sm outline-none tabular focus-lime disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          {lockTarget && <div className="text-[9.5px] text-white/30 mt-1">Otomatis dari total Wishlist</div>}
+        </div>
+        <div>
+          <label className="text-[10px] text-white/40 font-medium">Terkumpul (Rp)</label>
+          <input type="text" inputMode="numeric" value={saved} onChange={(e) => setSaved(formatRupiahInput(e.target.value))} className="w-full bg-white/[0.06] rounded-lg px-3 py-2 mt-1 text-sm outline-none tabular focus-lime" />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          disabled={!canSave}
+          onClick={() => onSave({ name: name.trim(), target: lockTarget ? goal.target : parseRupiahInput(target), saved: parseRupiahInput(saved) || 0 })}
+          className="flex-1 bg-lime disabled:bg-white/10 disabled:text-white/30 text-black text-xs font-semibold rounded-lg py-2.5"
+        >
+          Simpan
+        </button>
+        <button onClick={onCancel} className="flex-1 bg-white/5 hover:bg-white/10 text-white/70 text-xs font-medium rounded-lg py-2.5">Batal</button>
+      </div>
+    </div>
+  );
+}
+
+function AddSpaylaterSheet({ wallets, primaryWalletId, onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [totalAmount, setTotalAmount] = useState("");
+  const [tenor, setTenor] = useState("3");
+  const [purchaseDate, setPurchaseDate] = useState(todayKey());
+  const [walletId, setWalletId] = useState(primaryWalletId || wallets[0]?.id);
+
+  const canSubmit = name.trim() && parseRupiahInput(totalAmount) > 0 && Number(tenor) > 0 && purchaseDate && walletId;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Spaylater</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama barang/transaksi</label>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Kredivo - Laptop" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Total Tagihan (Rp)</label>
+        <input type="text" inputMode="numeric" value={totalAmount} onChange={(e) => setTotalAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Tenor</label>
+        <div className="grid grid-cols-4 gap-2 mt-1.5 mb-4">
+          {[1, 3, 6, 12].map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTenor(String(t))}
+              className={`rounded-lg py-2.5 text-xs font-medium border transition ${Number(tenor) === t ? "bg-lime border-lime text-black font-semibold" : "bg-white/[0.03] border-white/10 text-white/70 hover:border-lime/50"}`}
+            >
+              {t} bln
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tanggal Pembelian</label>
+        <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+
+        <label className="text-[11px] text-white/40 font-medium">Dompet</label>
+        <select value={walletId} onChange={(e) => setWalletId(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime text-white" style={{ colorScheme: "dark" }}>
+          {wallets.map((w) => (
+            <option key={w.id} value={w.id} style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>{w.name}</option>
+          ))}
+        </select>
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit({ name: name.trim(), totalAmount: parseRupiahInput(totalAmount), tenor: Number(tenor), purchaseDate, walletId })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
+        >
+          Tambah Spaylater
+        </button>
       </div>
     </div>
   );
