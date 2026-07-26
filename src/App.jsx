@@ -1237,6 +1237,20 @@ export default function AgrLedgerApp() {
   const routineByMonth = useMemo(() => {
     const map = {};
     if (Array.isArray(data?.routineEntries)) {
+      // Cari transaksi expense yang sudah dikaitkan (routineId) ke item rutin tertentu di bulan tertentu.
+      // Kalau sudah ada, item rutin itu tidak lagi dihitung otomatis di bulan itu (mencegah dobel hitung).
+      const linkedRoutineMonths = new Set();
+      if (Array.isArray(data?.transactions)) {
+        data.transactions.forEach((t) => {
+          if (t.type === "expense" && t.routineId && t.date) {
+            const d = new Date(t.date.slice(0, 10) + "T00:00:00");
+            if (!isNaN(d.getTime())) {
+              linkedRoutineMonths.add(`${t.routineId}|${d.getFullYear()}-${d.getMonth()}`);
+            }
+          }
+        });
+      }
+
       data.routineEntries.forEach((item) => {
         if (!item) return;
         const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
@@ -1244,11 +1258,14 @@ export default function AgrLedgerApp() {
 
         for (let mIdx = startIdx; mIdx <= stopIdx; mIdx++) {
           const key = `${item.activeYear}-${mIdx}`;
+          const isLinked = linkedRoutineMonths.has(`${item.id}|${key}`);
           if (!map[key]) map[key] = [];
           map[key].push({
             id: item.id,
             name: item.name,
-            amount: item.amount,
+            amount: isLinked ? 0 : item.amount, // sudah tercatat lewat transaksi -> jangan dihitung lagi di sini
+            plannedAmount: item.amount,
+            linked: isLinked,
             activeRange: `${MONTHS[startIdx]} - ${MONTHS[stopIdx]}`,
           });
         }
@@ -1256,6 +1273,7 @@ export default function AgrLedgerApp() {
     }
     return map;
   }, [data]);
+
 
   function computeYearEndBalance(yearKey, allBudgetYears) {
     if (!allBudgetYears[yearKey]) return 0;
@@ -1285,18 +1303,8 @@ export default function AgrLedgerApp() {
       const totalLemburBulanIni = overtimeAmountByMonth[`${yearKey}-${idx}`] || 0;
 
       let totalRutinOtomatis = 0;
-      if (Array.isArray(data?.routineEntries)) {
-        data.routineEntries.forEach((item) => {
-          const itemYear = Number(item.activeYear || yearKey);
-          if (itemYear === Number(yearKey)) {
-            const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
-            const stopIdx = item.stopIndex !== undefined ? Number(item.stopIndex) : 11;
-            if (idx >= startIdx && idx <= stopIdx) {
-              totalRutinOtomatis += Number(item.amount) || 0;
-            }
-          }
-        });
-      }
+      const rutListYE = routineByMonth[`${yearKey}-${idx}`] || [];
+      totalRutinOtomatis = rutListYE.reduce((s, i) => s + i.amount, 0);
 
       const salList = salaryByMonth[`${yearKey}-${idx}`] || [];
       const rawGajiKotor = salList.reduce((s, i) => s + i.amount, 0);
@@ -1720,13 +1728,13 @@ export default function AgrLedgerApp() {
     }));
   }
 
-  function addTransaction({ amount, category, note, walletId, fromWalletId, toWalletId, type, date }) {
+  function addTransaction({ amount, category, note, walletId, fromWalletId, toWalletId, type, date, routineId }) {
     setData((prev) => {
       const next = { ...prev };
       const txDate = date || todayKey();
       
       next.transactions = [
-        { id: crypto.randomUUID(), amount, category, note, walletId, fromWalletId, toWalletId, type, date: txDate, ts: Date.now() },
+        { id: crypto.randomUUID(), amount, category, note, walletId, fromWalletId, toWalletId, type, date: txDate, ts: Date.now(), routineId: routineId || null },
         ...prev.transactions,
       ];
       
@@ -1744,6 +1752,7 @@ export default function AgrLedgerApp() {
       return next;
     });
   }
+
 
   function addSalaryEntry({ amount, date, walletId }) {
     if (!date || !amount || !walletId) return;
@@ -3167,9 +3176,12 @@ export default function AgrLedgerApp() {
           <div className="space-y-2 overflow-y-auto pr-1 flex-1">
             {activePopup.breakdown.map((b, idx) => (
               <div key={b.id || idx} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-white/70 truncate">{b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}</span>
+                <span className="text-white/70 truncate">
+                  {b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}
+                  {b.linked && <span className="text-lime/70 ml-1">✓ tercatat via transaksi</span>}
+                </span>
                 <span className="flex items-center gap-2 shrink-0">
-                  <span className={`tabular ${b.paid ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
+                  <span className={`tabular ${b.paid || b.linked ? "text-lime" : "text-white/80"}`}>{rupiah(b.linked ? b.plannedAmount : b.amount)}</span>
                   {activePopup.typeLabel === "Gaji" && !String(b.id).startsWith("lembur") && (
                     <button onClick={() => { deleteSalaryEntry(b.id); setActivePopup(null); }} className="text-white/30 hover:text-coral"><Trash2 size={12} /></button>
                   )}
@@ -3201,11 +3213,11 @@ export default function AgrLedgerApp() {
       )}
 
       {showAdd && (
-        <TransactionSheet wallets={data.wallets} primaryWalletId={data.primaryWalletId} title="Catat Transaksi" defaultType={addType} onClose={() => setShowAdd(false)} onSubmit={(payload) => { addTransaction(payload); setShowAdd(false); }} onSalarySubmit={(payload) => { addSalaryEntry({ ...payload, walletId: data.primaryWalletId || data.wallets[0]?.id }); setShowAdd(false); }} />
+        <TransactionSheet wallets={data.wallets} primaryWalletId={data.primaryWalletId} routineEntries={data.routineEntries} title="Catat Transaksi" defaultType={addType} onClose={() => setShowAdd(false)} onSubmit={(payload) => { addTransaction(payload); setShowAdd(false); }} onSalarySubmit={(payload) => { addSalaryEntry({ ...payload, walletId: data.primaryWalletId || data.wallets[0]?.id }); setShowAdd(false); }} />
       )}
 
       {editingTx && (
-        <TransactionSheet wallets={data.wallets} primaryWalletId={data.primaryWalletId} title="Edit Transaksi" initialData={editingTx} onClose={() => setEditingTx(null)} onSubmit={(payload) => { updateTransaction(editingTx.id, payload); setEditingTx(null); }} />
+        <TransactionSheet wallets={data.wallets} primaryWalletId={data.primaryWalletId} routineEntries={data.routineEntries} title="Edit Transaksi" initialData={editingTx} onClose={() => setEditingTx(null)} onSubmit={(payload) => { updateTransaction(editingTx.id, payload); setEditingTx(null); }} />
       )}
 
       {showAddGoal && (
@@ -3270,7 +3282,7 @@ export default function AgrLedgerApp() {
   );
 }
 
-function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initialData, onClose, onSubmit, onSalarySubmit }) {
+function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initialData, routineEntries, onClose, onSubmit, onSalarySubmit }) {
   const [type, setType] = useState(initialData?.type || defaultType || "expense");
   const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
   const [category, setCategory] = useState(initialData?.category || CATEGORIES[0].id);
@@ -3279,8 +3291,22 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
   const [fromWalletId, setFromWalletId] = useState(initialData?.fromWalletId || wallets[0]?.id);
   const [toWalletId, setToWalletId] = useState(initialData?.toWalletId || (wallets.length > 1 ? wallets[1].id : wallets[0]?.id));
   const [date, setDate] = useState(initialData?.date || todayKey());
+  const [routineId, setRoutineId] = useState(initialData?.routineId || "");
 
   const canSubmit = parseRupiahInput(amount) > 0 && date && (type === "salary" ? true : type === "transfer" ? (fromWalletId && toWalletId && fromWalletId !== toWalletId) : walletId);
+
+  const activeRoutineOptions = useMemo(() => {
+    if (!Array.isArray(routineEntries) || !date) return [];
+    const d = new Date(date.slice(0, 10) + "T00:00:00");
+    if (isNaN(d.getTime())) return [];
+    const y = d.getFullYear();
+    const mIdx = d.getMonth();
+    return routineEntries.filter((r) => {
+      const startIdx = r.startIndex !== undefined ? Number(r.startIndex) : 0;
+      const stopIdx = r.stopIndex !== undefined ? Number(r.stopIndex) : 11;
+      return Number(r.activeYear) === y && mIdx >= startIdx && mIdx <= stopIdx;
+    });
+  }, [routineEntries, date]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
@@ -3319,8 +3345,28 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
                 </button>
               ))}
             </div>
+
+            {activeRoutineOptions.length > 0 && (
+              <>
+                <label className="text-[11px] text-white/40 font-medium">Kaitkan dengan Pengeluaran Rutin (opsional)</label>
+                <select
+                  value={routineId}
+                  onChange={(e) => setRoutineId(e.target.value)}
+                  className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-2 text-sm outline-none focus-lime text-white"
+                >
+                  <option value="">Bukan pengeluaran rutin</option>
+                  {activeRoutineOptions.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name} ({rupiah(r.amount)}/bulan)</option>
+                  ))}
+                </select>
+                <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
+                  Kalau dikaitkan, pos "Rutin" di tabel Budget bulan ini tidak akan dihitung lagi otomatis — supaya tidak dobel dengan transaksi ini.
+                </p>
+              </>
+            )}
           </>
         )}
+
 
         {type === "transfer" ? (
           <div className="grid grid-cols-2 gap-3 mb-5">
@@ -3365,7 +3411,7 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
             if (type === "salary") {
               onSalarySubmit({ amount: parseRupiahInput(amount), date, walletId: primaryWalletId || wallets[0]?.id });
             } else {
-              onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date });
+              onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date, routineId: (type === "expense" && activeRoutineOptions.some(r => r.id === routineId)) ? routineId : null });
             }
           }} 
           className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2 text-xs"
