@@ -1863,8 +1863,31 @@ export default function AgrLedgerApp() {
         ...prev,
         wallets: remaining,
         primaryWalletId: prev.primaryWalletId === id ? remaining[0]?.id : prev.primaryWalletId,
+        // Bersihkan semua referensi ke dompet yang dihapus supaya tidak ada data "yatim"
+        transactions: prev.transactions.filter((t) =>
+          t.type === "transfer"
+            ? t.fromWalletId !== id && t.toWalletId !== id
+            : t.walletId !== id
+        ),
+        salaryEntries: (prev.salaryEntries || []).filter((e) => e.walletId !== id),
+        // Cicilan spaylater tidak dihapus, cukup diputus tautannya ke dompet
+        // (rencana cicilannya tetap ada, tapi tidak lagi otomatis potong dompet manapun)
+        spaylater: (prev.spaylater || []).map((s) =>
+          s.walletId === id ? { ...s, walletId: null } : s
+        ),
       };
     });
+  }
+
+  function getWalletDeletionImpact(id) {
+    if (!data) return { txCount: 0, salaryCount: 0, spaylaterCount: 0, balance: 0 };
+    const txCount = data.transactions.filter((t) =>
+      t.type === "transfer" ? t.fromWalletId === id || t.toWalletId === id : t.walletId === id
+    ).length;
+    const salaryCount = (data.salaryEntries || []).filter((e) => e.walletId === id).length;
+    const spaylaterCount = (data.spaylater || []).filter((s) => s.walletId === id).length;
+    const wallet = data.wallets.find((w) => w.id === id);
+    return { txCount, salaryCount, spaylaterCount, balance: wallet?.balance || 0 };
   }
 
   function updateWalletName(id, newName) {
@@ -2338,7 +2361,23 @@ export default function AgrLedgerApp() {
                                 </button>
                               )}
                               {canDeleteWallet && (
-                                <button onClick={() => requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.`, () => deleteWallet(w.id))} className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"><Trash2 size={11} /></button>
+                                <button
+                                  onClick={() => {
+                                    const impact = getWalletDeletionImpact(w.id);
+                                    const parts = [];
+                                    if (impact.balance !== 0) parts.push(`saldo ${rupiah(impact.balance)}`);
+                                    if (impact.txCount > 0) parts.push(`${impact.txCount} transaksi`);
+                                    if (impact.salaryCount > 0) parts.push(`${impact.salaryCount} entry gaji`);
+                                    if (impact.spaylaterCount > 0) parts.push(`${impact.spaylaterCount} cicilan spaylater (akan diputus tautannya)`);
+                                    const detail = parts.length
+                                      ? ` Dompet ini masih punya ${parts.join(", ")}. Data transaksi & gaji yang terkait akan ikut terhapus permanen.`
+                                      : "";
+                                    requestConfirm("Hapus Dompet?", `Dompet "${w.name}" akan dihapus.${detail}`, () => deleteWallet(w.id));
+                                  }}
+                                  className="text-white/0 group-hover:text-white/30 hover:text-coral transition p-0.5"
+                                >
+                                  <Trash2 size={11} />
+                                </button>
                               )}
                             </div>
                           </div>
