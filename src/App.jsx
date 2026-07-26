@@ -66,8 +66,10 @@ const MONTHS = [
 
 const TAB_ORDER = ["home", "budget", "tasks", "wishlist", "lembur"];
 
-const rupiah = (n) =>
-  "Rp" + Math.round(n || 0).toLocaleString("id-ID");
+const rupiah = (n) => {
+  const val = Math.round(n || 0);
+  return val < 0 ? "-Rp" + Math.abs(val).toLocaleString("id-ID") : "Rp" + val.toLocaleString("id-ID");
+};
 
 const formatRupiahInput = (val) => {
   const raw = String(val || "").replace(/[^0-9]/g, "");
@@ -80,16 +82,17 @@ const parseRupiahInput = (val) => {
   return Number(raw) || 0;
 };
 
-const todayKey = () => {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+const toLocalISODate = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 
+const todayKey = () => toLocalISODate(new Date());
+
 function getWeekRange(d = new Date()) {
-  const day = d.getDay(); // 0=Minggu, 1=Senin, dst.
+  const day = d.getDay(); 
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const monday = new Date(d);
   monday.setDate(d.getDate() + diffToMonday);
@@ -98,6 +101,15 @@ function getWeekRange(d = new Date()) {
   sunday.setDate(monday.getDate() + 6);
   sunday.setHours(23, 59, 59, 999);
   return { start: monday, end: sunday };
+}
+
+function getWeeksInMonth(year, monthIdx) {
+  const firstDay = new Date(year, monthIdx, 1);
+  const lastDay = new Date(year, monthIdx + 1, 0);
+  const { start: firstWeekStart } = getWeekRange(firstDay);
+  const { start: lastWeekStart } = getWeekRange(lastDay);
+  const diffWeeks = Math.round((lastWeekStart - firstWeekStart) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  return diffWeeks;
 }
 
 function computeNextRecurDate(day, fromISO) {
@@ -185,7 +197,6 @@ function migrateData(raw) {
     merged.primaryWalletId = merged.wallets[0]?.id || null;
   }
   
-  // Migrasi logika budget (dukungan untuk budget mingguan/bulanan)
   if (merged.monthlyBudget !== undefined && merged.budgetLimit === undefined) {
     merged.budgetLimit = merged.monthlyBudget;
     delete merged.monthlyBudget;
@@ -195,7 +206,7 @@ function migrateData(raw) {
     delete merged.dailyBudget;
   }
   if (typeof merged.budgetLimit !== "number") merged.budgetLimit = seed.budgetLimit;
-  if (!merged.budgetPeriod) merged.budgetPeriod = "monthly"; // default aman
+  if (!merged.budgetPeriod) merged.budgetPeriod = "monthly";
 
   if (!merged.wishlistCategories) merged.wishlistCategories = [];
   else {
@@ -721,7 +732,6 @@ export default function AgrLedgerApp() {
   const [showSpaylaterHistory, setShowSpaylaterHistory] = useState(false);
   const [showSalaryHistory, setShowSalaryHistory] = useState(false);
 
-  // PDF Report State
   const [showReportPicker, setShowReportPicker] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
 
@@ -961,34 +971,57 @@ export default function AgrLedgerApp() {
   }
 
   const totals = useMemo(() => {
-    if (!data) return { income: 0, expense: 0, balance: 0, monthSpent: 0, weekSpent: 0 };
-    const currentMonthPrefix = new Date().toISOString().slice(0, 7);
+    if (!data) return { income: 0, expense: 0, balance: 0, monthSpent: 0, weekSpent: 0, monthIncome: 0, weekIncome: 0, weeksInCurrentMonth: 0 };
+    
+    const today = new Date();
+    const currentMonthPrefix = toLocalISODate(today).slice(0, 7);
     const { start, end } = getWeekRange();
 
-    let income = 0, expense = 0, monthSpent = 0, weekSpent = 0;
+    let income = 0, expense = 0, monthSpent = 0, weekSpent = 0, monthIncome = 0, weekIncome = 0;
+
     for (const t of data.transactions) {
       if (t.type === "transfer") continue;
+      
       if (t.type === "income") income += t.amount;
       else expense += t.amount;
 
-      if (t.type === "expense" && t.date) {
-        if (t.date.startsWith(currentMonthPrefix)) {
-          monthSpent += t.amount;
-        }
-        const txDate = new Date(t.date + "T00:00:00");
-        if (txDate >= start && txDate <= end) {
-          weekSpent += t.amount;
+      if (t.date) {
+        const safeDate = t.date.slice(0, 10);
+        const txDate = new Date(safeDate + "T00:00:00");
+        const monthKey = safeDate.slice(0, 7);
+        
+        const isThisMonth = monthKey === currentMonthPrefix;
+        const isThisWeek = txDate >= start && txDate <= end;
+
+        if (t.type === "expense") {
+          if (isThisMonth) monthSpent += t.amount;
+          if (isThisWeek) weekSpent += t.amount;
+        } else if (t.type === "income") {
+          if (isThisMonth) monthIncome += t.amount;
+          if (isThisWeek) weekIncome += t.amount;
         }
       }
     }
+
+    // Budget selalu reset tiap periode (mingguan/bulanan) - tidak ada carry-over dari periode sebelumnya.
+    const weeksInCurrentMonth = getWeeksInMonth(today.getFullYear(), today.getMonth());
+
     const balance = data.wallets.reduce((s, w) => s + w.balance, 0);
-    return { income, expense, balance, monthSpent, weekSpent };
+    return { income, expense, balance, monthSpent, weekSpent, monthIncome, weekIncome, weeksInCurrentMonth };
   }, [data]);
 
   const isWeekly = data?.budgetPeriod === "weekly";
   const currentSpent = isWeekly ? totals.weekSpent : totals.monthSpent;
-  const remainingBudget = data ? Math.max(data.budgetLimit - currentSpent, 0) : 0;
-  const budgetRatio = data && data.budgetLimit > 0 ? Math.min(1, remainingBudget / data.budgetLimit) : 0;
+  const currentIncome = isWeekly ? totals.weekIncome : totals.monthIncome;
+
+  // data.budgetLimit selalu berarti limit MINGGUAN. Limit bulanan = limit mingguan x jumlah minggu di bulan berjalan.
+  const weeklyLimit = data?.budgetLimit || 0;
+  const weeksInCurrentMonth = totals.weeksInCurrentMonth || 0;
+  const monthlyLimit = weeklyLimit * weeksInCurrentMonth;
+  const effectiveBudget = isWeekly ? weeklyLimit : monthlyLimit;
+
+  const remainingBudget = effectiveBudget - currentSpent;
+  const budgetRatio = effectiveBudget > 0 ? Math.max(0, Math.min(1, remainingBudget / effectiveBudget)) : 0;
 
   const categorySpend = useMemo(() => {
     if (!data) return [];
@@ -1011,8 +1044,11 @@ export default function AgrLedgerApp() {
     const txMap = {};
     for (const t of data.transactions) {
       if (t.type === "expense" || t.type === "income") {
-        if (!txMap[t.date]) txMap[t.date] = { expense: 0, income: 0 };
-        txMap[t.date][t.type] += t.amount;
+        const safeDate = t.date ? t.date.slice(0, 10) : "";
+        if (!safeDate) continue;
+
+        if (!txMap[safeDate]) txMap[safeDate] = { expense: 0, income: 0 };
+        txMap[safeDate][t.type] += t.amount;
       }
     }
 
@@ -1062,12 +1098,21 @@ export default function AgrLedgerApp() {
 
   const filteredTransactions = useMemo(() => {
     if (!data) return [];
-    return data.transactions.filter((t) => {
-      const cat = CATEGORIES.find((c) => c.id === t.category);
-      const matchesSearch = !search || (t.note || "").toLowerCase().includes(search.toLowerCase()) || (cat?.label || "").toLowerCase().includes(search.toLowerCase());
-      if (filterCat === "all") return matchesSearch;
-      return matchesSearch && t.type === "expense" && t.category === filterCat;
-    });
+    return data.transactions
+      .filter((t) => {
+        const cat = CATEGORIES.find((c) => c.id === t.category);
+        const matchesSearch = !search || (t.note || "").toLowerCase().includes(search.toLowerCase()) || (cat?.label || "").toLowerCase().includes(search.toLowerCase());
+        if (filterCat === "all") return matchesSearch;
+        return matchesSearch && t.type === "expense" && t.category === filterCat;
+      })
+      .sort((a, b) => {
+        const dateA = a.date || "";
+        const dateB = b.date || "";
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA); 
+        }
+        return (b.ts || 0) - (a.ts || 0); 
+      });
   }, [data, search, filterCat]);
 
   function updateBudgetCell(year, month, field, value) {
@@ -1088,7 +1133,7 @@ export default function AgrLedgerApp() {
     const map = {};
     for (const item of data?.spaylater || []) {
       if (!item.purchaseDate) continue;
-      const d = new Date(item.purchaseDate + "T00:00:00");
+      const d = new Date(item.purchaseDate.slice(0,10) + "T00:00:00");
       if (isNaN(d.getTime())) continue;
       
       const startMonthIndex = d.getMonth();
@@ -1118,7 +1163,8 @@ export default function AgrLedgerApp() {
     const map = {};
     for (const t of data?.transactions || []) {
       if (t.type !== "expense" || !t.date) continue;
-      const d = new Date(t.date + "T00:00:00");
+      const safeDate = t.date.slice(0,10);
+      const d = new Date(safeDate + "T00:00:00");
       if (isNaN(d.getTime())) continue;
       const y = d.getFullYear();
       const mIdx = d.getMonth();
@@ -1141,7 +1187,8 @@ export default function AgrLedgerApp() {
     if (Array.isArray(data?.transactions)) {
       data.transactions.forEach((item) => {
         if (item && item.type === "income" && item.date) {
-          const d = new Date(item.date + "T00:00:00");
+          const safeDate = item.date.slice(0,10);
+          const d = new Date(safeDate + "T00:00:00");
           if (isNaN(d.getTime())) return;
           const key = `${d.getFullYear()}-${d.getMonth()}`;
           if (!rawMap[key]) rawMap[key] = [];
@@ -1162,7 +1209,8 @@ export default function AgrLedgerApp() {
     const map = {};
     (data?.salaryEntries || []).forEach((item) => {
       if (!item?.date) return;
-      const d = new Date(item.date + "T00:00:00");
+      const safeDate = item.date.slice(0,10);
+      const d = new Date(safeDate + "T00:00:00");
       if (isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       if (!map[key]) map[key] = [];
@@ -2099,16 +2147,20 @@ export default function AgrLedgerApp() {
                           cy="60"
                           r="52"
                           fill="none"
-                          stroke="#C8FF4D"
+                          stroke={remainingBudget < 0 ? "#FF7A6B" : "#C8FF4D"}
                           strokeWidth="10"
                           strokeLinecap="round"
                           strokeDasharray={2 * Math.PI * 52}
                           strokeDashoffset={2 * Math.PI * 52 * (1 - budgetRatio)}
-                          style={{ transition: "stroke-dashoffset 0.5s ease" }}
+                          style={{ transition: "stroke-dashoffset 0.5s ease, stroke 0.3s ease" }}
                         />
                       </svg>
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <Sparkles size={13} className="text-lime mb-1" />
+                        {remainingBudget < 0 ? (
+                          <AlertCircle size={13} className="text-coral mb-1" />
+                        ) : (
+                          <Sparkles size={13} className="text-lime mb-1" />
+                        )}
                         <div className="text-[10px] text-white/40 uppercase tracking-wider">Sisa</div>
                       </div>
                     </div>
@@ -2131,39 +2183,49 @@ export default function AgrLedgerApp() {
                       </div>
 
                       {!isEditingBudgetLimit ? (
-                        <div className="font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate">
+                        <div className={`font-semibold text-[32px] leading-none tabular tracking-tight mb-2 truncate ${remainingBudget < 0 ? "text-coral" : ""}`}>
                           {rupiah(remainingBudget)}
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1 mb-2">
-                          <input
-                            autoFocus
-                            type="text"
-                            inputMode="numeric"
-                            value={tempBudgetLimit}
-                            onChange={(e) => setTempBudgetLimit(formatRupiahInput(e.target.value))}
-                            className="w-full bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular"
-                          />
-                          <button onClick={() => {
-                            const val = parseRupiahInput(tempBudgetLimit);
-                            if (val > 0) setData((prev) => ({ ...prev, budgetLimit: val }));
-                            setIsEditingBudgetLimit(false);
-                          }} className="text-lime hover:scale-110 bg-lime/10 p-1.5 rounded"><Check size={14} /></button>
+                        <div className="mb-2">
+                          <div className="flex items-center gap-1">
+                            <input
+                              autoFocus
+                              type="text"
+                              inputMode="numeric"
+                              value={tempBudgetLimit}
+                              onChange={(e) => setTempBudgetLimit(formatRupiahInput(e.target.value))}
+                              className="w-full bg-white/10 text-sm px-2 py-1 rounded outline-none text-lime font-semibold tabular"
+                            />
+                            <button onClick={() => {
+                              const val = parseRupiahInput(tempBudgetLimit);
+                              if (val > 0) setData((prev) => ({ ...prev, budgetLimit: val }));
+                              setIsEditingBudgetLimit(false);
+                            }} className="text-lime hover:scale-110 bg-lime/10 p-1.5 rounded"><Check size={14} /></button>
+                          </div>
+                          <div className="text-[10px] text-white/30 mt-1">Ini limit per minggu (limit bulanan otomatis dihitung dari sini)</div>
                         </div>
                       )}
 
-                      <div className="text-[11px] text-white/40 mb-3">
-                        Total Limit: <span className="text-white font-medium tabular">{rupiah(data?.budgetLimit)}</span>
+                      <div className="text-[11px] text-white/40 mb-3 flex flex-col gap-0.5">
+                        <span>
+                          Total Limit: <span className="text-white font-medium tabular">{rupiah(effectiveBudget)}</span>
+                        </span>
+                        {!isWeekly && (
+                          <span className="text-white/30">
+                            {rupiah(weeklyLimit)}/minggu × {weeksInCurrentMonth} minggu bulan ini
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex gap-4">
                         <div>
                           <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingUp size={11} className="text-teal" /> Masuk</div>
-                          <div className="font-medium text-sm tabular">{rupiah(totals.income)}</div>
+                          <div className="font-medium text-sm tabular">{rupiah(currentIncome)}</div>
                         </div>
                         <div>
                           <div className="flex items-center gap-1 text-[11px] text-white/40 mb-0.5"><TrendingDown size={11} className="text-coral" /> Keluar</div>
-                          <div className="font-medium text-sm tabular">{rupiah(totals.expense)}</div>
+                          <div className="font-medium text-sm tabular">{rupiah(currentSpent)}</div>
                         </div>
                       </div>
 
@@ -3447,7 +3509,7 @@ function AddOvertimeSheet({ onClose, onSubmit, initialData }) {
 
   const getAvailableMonths = (dateStr) => {
     if (!dateStr) return [];
-    const d = new Date(dateStr + "T00:00:00");
+    const d = new Date(dateStr.slice(0,10) + "T00:00:00");
     const y = d.getFullYear();
     const mIdx = d.getMonth();
 
@@ -3527,207 +3589,6 @@ function AddOvertimeSheet({ onClose, onSubmit, initialData }) {
         </label>
 
         <button disabled={!canSubmit} onClick={() => onSubmit({ date, targetMonth, jenis, totalJam: Number(totalJam), paid })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan Lembur</button>
-      </div>
-    </div>
-  );
-}
-
-function AddGoalSheet({ onClose, onSubmit }) {
-  const [name, setName] = useState("");
-  const [target, setTarget] = useState("");
-  const [saved, setSaved] = useState("");
-  const canSubmit = name.trim() && parseRupiahInput(target) > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Tambah Target Tabungan</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">Nama Target</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Dana Darurat" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <div>
-            <label className="text-[11px] text-white/40 font-medium">Target (Rp)</label>
-            <input type="text" inputMode="numeric" value={target} onChange={(e) => setTarget(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-white/[0.04] rounded-lg px-3 py-3 mt-1.5 text-sm tabular outline-none focus-lime" />
-          </div>
-          <div>
-            <label className="text-[11px] text-white/40 font-medium">Terkumpul (Rp)</label>
-            <input type="text" inputMode="numeric" value={saved} onChange={(e) => setSaved(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-white/[0.04] rounded-lg px-3 py-3 mt-1.5 text-sm tabular outline-none focus-lime" />
-          </div>
-        </div>
-        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), target: parseRupiahInput(target), saved: parseRupiahInput(saved) })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan Target</button>
-      </div>
-    </div>
-  );
-}
-
-function EditGoalCard({ goal, onSave, onCancel }) {
-  const [name, setName] = useState(goal.name);
-  const [target, setTarget] = useState(formatRupiahInput(goal.target));
-  const [saved, setSaved] = useState(formatRupiahInput(goal.saved));
-
-  return (
-    <div className="bg-surface border border-lime/40 rounded-xl p-4">
-      <div className="flex justify-between items-center mb-3">
-        <span className="text-xs font-semibold text-lime">Edit Target Tabungan</span>
-        <button onClick={onCancel} className="text-white/40 hover:text-white"><X size={15} /></button>
-      </div>
-      <input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-white/10 rounded px-2.5 py-2 text-xs mb-3 outline-none text-white" />
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <div>
-          <label className="text-[10px] text-white/40">Target (Rp)</label>
-          <input type="text" inputMode="numeric" value={target} onChange={(e) => setTarget(formatRupiahInput(e.target.value))} className="w-full bg-white/10 rounded px-2 py-1.5 text-xs outline-none text-white tabular" />
-        </div>
-        <div>
-          <label className="text-[10px] text-white/40">Terkumpul (Rp)</label>
-          <input type="text" inputMode="numeric" value={saved} onChange={(e) => setSaved(formatRupiahInput(e.target.value))} className="w-full bg-white/10 rounded px-2 py-1.5 text-xs outline-none text-white tabular" />
-        </div>
-      </div>
-      <button onClick={() => onSave({ name: name.trim(), target: parseRupiahInput(target), saved: parseRupiahInput(saved) })} className="w-full bg-lime text-black font-semibold rounded py-2 text-xs flex items-center justify-center gap-1">
-        <Check size={14} /> Simpan Perubahan
-      </button>
-    </div>
-  );
-}
-
-function SingleFieldSheet({ title, label, placeholder, submitLabel, initialValue, onClose, onSubmit }) {
-  const [value, setValue] = useState(initialValue || "");
-  const canSubmit = value.trim().length > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">{title}</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-        <label className="text-[11px] text-white/40 font-medium">{label}</label>
-        <input
-          autoFocus
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) onSubmit(value.trim()); }}
-          placeholder={placeholder}
-          className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime"
-        />
-        <button disabled={!canSubmit} onClick={() => onSubmit(value.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">
-          {submitLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TopUpGoalSheet({ goal, onClose, onSubmit }) {
-  const [amount, setAmount] = useState("");
-  const canSubmit = parseRupiahInput(amount) > 0;
-  const projected = goal.saved + parseRupiahInput(amount);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Tambah Tabungan</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-
-        <div className="flex items-center gap-2 mb-5 text-sm text-white/60">
-          <PiggyBank size={15} className="text-lime shrink-0" />
-          <span className="truncate">{goal.name}</span>
-        </div>
-
-        <label className="text-[11px] text-white/40 font-medium">Jumlah Tambahan (Rp)</label>
-        <input
-          autoFocus
-          type="text"
-          inputMode="numeric"
-          value={amount}
-          onChange={(e) => setAmount(formatRupiahInput(e.target.value))}
-          placeholder="0"
-          className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime"
-        />
-
-        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4 mb-6">
-          <div className="flex justify-between text-xs text-white/40 mb-1">
-            <span>Setelah top up</span>
-            <span>Target</span>
-          </div>
-          <div className="flex justify-between text-sm font-medium tabular">
-            <span className={projected >= goal.target ? "text-lime" : "text-white"}>{rupiah(projected)}</span>
-            <span className="text-white/50">{rupiah(goal.target)}</span>
-          </div>
-          <div className="h-[4px] bg-white/10 overflow-hidden rounded-full mt-2.5">
-            <div className="h-full bg-lime transition-all rounded-full" style={{ width: `${Math.min(100, (projected / Math.max(1, goal.target)) * 100)}%` }} />
-          </div>
-        </div>
-
-        <button disabled={!canSubmit} onClick={() => onSubmit(parseRupiahInput(amount))} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">
-          Simpan Tabungan
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function AddSpaylaterSheet({ wallets, primaryWalletId, onClose, onSubmit }) {
-  const [name, setName] = useState("");
-  const [totalAmount, setTotalAmount] = useState("");
-  const [tenor, setTenor] = useState(3);
-  const [purchaseDate, setPurchaseDate] = useState(todayKey());
-  const [walletId, setWalletId] = useState(primaryWalletId || wallets[0]?.id);
-
-  const TENOR_OPTIONS = [1, 3, 6, 12];
-  const canSubmit = name.trim() && parseRupiahInput(totalAmount) > 0 && Number(tenor) > 0 && purchaseDate && walletId;
-  const monthlyPreview = Number(tenor) > 0 ? Math.round(parseRupiahInput(totalAmount) / Number(tenor)) : 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
-      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-semibold text-base">Catat Cicilan SPayLater</div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
-        </div>
-
-        <label className="text-[11px] text-white/40 font-medium">Nama Barang / Transaksi</label>
-        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. iPhone Case" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
-
-        <label className="text-[11px] text-white/40 font-medium">Total Harga (Rp)</label>
-        <input type="text" inputMode="numeric" value={totalAmount} onChange={(e) => setTotalAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
-
-        <label className="text-[11px] text-white/40 font-medium">Tenor</label>
-        <div className="grid grid-cols-4 gap-2 mt-1.5 mb-4">
-          {TENOR_OPTIONS.map((t) => (
-            <button key={t} onClick={() => setTenor(t)} className={`py-2.5 rounded-lg text-xs font-medium border transition ${tenor === t ? "bg-lime text-black border-lime font-bold" : "bg-white/[0.03] border-white/10 text-white/70 hover:bg-white/[0.06]"}`}>
-              {t} Bln
-            </button>
-          ))}
-        </div>
-
-        <label className="text-[11px] text-white/40 font-medium">Tanggal Pembelian</label>
-        <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
-
-        <label className="text-[11px] text-white/40 font-medium">Potong dari Dompet (saat dibayar)</label>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-1.5 mb-4">
-          {wallets.map((w) => (
-            <button key={w.id} onClick={() => setWalletId(w.id)} className={`truncate rounded-lg px-3 py-2 text-xs font-medium border ${walletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
-          ))}
-        </div>
-
-        {monthlyPreview > 0 && (
-          <div className="text-[11px] text-white/40 mb-6">
-            Cicilan per bulan: <span className="text-lime font-medium tabular">{rupiah(monthlyPreview)}</span>
-          </div>
-        )}
-
-        <button
-          disabled={!canSubmit}
-          onClick={() => onSubmit({ name: name.trim(), totalAmount: parseRupiahInput(totalAmount), tenor: Number(tenor), purchaseDate, walletId })}
-          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
-        >
-          Simpan Cicilan
-        </button>
       </div>
     </div>
   );
