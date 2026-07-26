@@ -467,7 +467,7 @@ function MonthlyReportDocument({ year, monthIndex, detail, transactions, wallets
 
   const categoryBreakdown = CATEGORIES.map((c) => ({
     ...c,
-    total: transactions.filter((t) => t.type === "expense" && t.category === c.id).reduce((s, t) => s + t.amount, 0),
+    total: transactions.filter((t) => t.type === "expense" && !t.routineId && t.category === c.id).reduce((s, t) => s + t.amount, 0),
   })).filter((c) => c.total > 0).sort((a, b) => b.total - a.total);
 
   const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || a.ts - b.ts);
@@ -1163,6 +1163,7 @@ export default function AgrLedgerApp() {
     const map = {};
     for (const t of data?.transactions || []) {
       if (t.type !== "expense" || !t.date) continue;
+      if (t.routineId) continue; // sudah dihitung di 'Rutin' pakai nominal aslinya, jangan dihitung lagi di sini
       const safeDate = t.date.slice(0,10);
       const d = new Date(safeDate + "T00:00:00");
       if (isNaN(d.getTime())) continue;
@@ -1179,6 +1180,7 @@ export default function AgrLedgerApp() {
     }
     return map;
   }, [data]);
+
 
   const gajiTambahanByMonth = useMemo(() => {
     const map = {};
@@ -1237,15 +1239,18 @@ export default function AgrLedgerApp() {
   const routineByMonth = useMemo(() => {
     const map = {};
     if (Array.isArray(data?.routineEntries)) {
-      // Cari transaksi expense yang sudah dikaitkan (routineId) ke item rutin tertentu di bulan tertentu.
-      // Kalau sudah ada, item rutin itu tidak lagi dihitung otomatis di bulan itu (mencegah dobel hitung).
-      const linkedRoutineMonths = new Set();
+      // Kalau sebuah item rutin sudah dikaitkan ke transaksi nyata di bulan tertentu, pakai nominal
+      // ASLI dari transaksi itu (bisa beda dari rencana) sebagai nominal Rutin bulan itu — bukan Rp0
+      // dan bukan juga nominal rencana. Transaksinya sendiri dikecualikan dari 'Pengeluaran' (lihat
+      // pengeluaranByMonth) supaya tidak dihitung dua kali.
+      const linkedAmountByRoutineMonth = {};
       if (Array.isArray(data?.transactions)) {
         data.transactions.forEach((t) => {
           if (t.type === "expense" && t.routineId && t.date) {
             const d = new Date(t.date.slice(0, 10) + "T00:00:00");
             if (!isNaN(d.getTime())) {
-              linkedRoutineMonths.add(`${t.routineId}|${d.getFullYear()}-${d.getMonth()}`);
+              const linkKey = `${t.routineId}|${d.getFullYear()}-${d.getMonth()}`;
+              linkedAmountByRoutineMonth[linkKey] = (linkedAmountByRoutineMonth[linkKey] || 0) + (t.amount || 0);
             }
           }
         });
@@ -1258,12 +1263,13 @@ export default function AgrLedgerApp() {
 
         for (let mIdx = startIdx; mIdx <= stopIdx; mIdx++) {
           const key = `${item.activeYear}-${mIdx}`;
-          const isLinked = linkedRoutineMonths.has(`${item.id}|${key}`);
+          const linkKey = `${item.id}|${key}`;
+          const isLinked = Object.prototype.hasOwnProperty.call(linkedAmountByRoutineMonth, linkKey);
           if (!map[key]) map[key] = [];
           map[key].push({
             id: item.id,
             name: item.name,
-            amount: isLinked ? 0 : item.amount, // sudah tercatat lewat transaksi -> jangan dihitung lagi di sini
+            amount: isLinked ? linkedAmountByRoutineMonth[linkKey] : item.amount,
             plannedAmount: item.amount,
             linked: isLinked,
             activeRange: `${MONTHS[startIdx]} - ${MONTHS[stopIdx]}`,
@@ -3179,9 +3185,12 @@ export default function AgrLedgerApp() {
                 <span className="text-white/70 truncate">
                   {b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}
                   {b.linked && <span className="text-lime/70 ml-1">✓ tercatat via transaksi</span>}
+                  {b.linked && b.plannedAmount !== undefined && b.amount !== b.plannedAmount && (
+                    <span className="text-white/30 ml-1">(rencana {rupiah(b.plannedAmount)})</span>
+                  )}
                 </span>
                 <span className="flex items-center gap-2 shrink-0">
-                  <span className={`tabular ${b.paid || b.linked ? "text-lime" : "text-white/80"}`}>{rupiah(b.linked ? b.plannedAmount : b.amount)}</span>
+                  <span className={`tabular ${b.paid || b.linked ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
                   {activePopup.typeLabel === "Gaji" && !String(b.id).startsWith("lembur") && (
                     <button onClick={() => { deleteSalaryEntry(b.id); setActivePopup(null); }} className="text-white/30 hover:text-coral"><Trash2 size={12} /></button>
                   )}
@@ -3351,7 +3360,14 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
                 <label className="text-[11px] text-white/40 font-medium">Kaitkan dengan Pengeluaran Rutin (opsional)</label>
                 <select
                   value={routineId}
-                  onChange={(e) => setRoutineId(e.target.value)}
+                  onChange={(e) => {
+                    const newId = e.target.value;
+                    setRoutineId(newId);
+                    if (newId && !amount) {
+                      const picked = activeRoutineOptions.find((r) => r.id === newId);
+                      if (picked) setAmount(formatRupiahInput(String(picked.amount)));
+                    }
+                  }}
                   className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-2 text-sm outline-none focus-lime text-white"
                   style={{ colorScheme: "dark" }}
                 >
@@ -3361,7 +3377,7 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
                   ))}
                 </select>
                 <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
-                  Kalau dikaitkan, pos "Rutin" di tabel Budget bulan ini tidak akan dihitung lagi otomatis — supaya tidak dobel dengan transaksi ini.
+                  Kalau dikaitkan, nominal yang kamu isi di atas akan jadi nominal "Rutin" bulan ini (menggantikan nominal rencana) — dan tidak dihitung dobel di "Pengeluaran".
                 </p>
               </>
             )}
