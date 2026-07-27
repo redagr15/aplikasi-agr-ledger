@@ -2559,6 +2559,7 @@ export default function AgrLedgerApp() {
                       const isTransfer = t.type === "transfer";
                       const fromW = data.wallets.find((w) => w.id === t.fromWalletId)?.name || "Dompet";
                       const toW = data.wallets.find((w) => w.id === t.toWalletId)?.name || "Dompet";
+                      const routineRef = t.routineId ? (data.routineEntries || []).find((r) => r.id === t.routineId) : null;
 
                       return (
                         <div key={t.id} className="group flex items-center justify-between py-3 border-b border-white/5">
@@ -2567,8 +2568,14 @@ export default function AgrLedgerApp() {
                               {isTransfer ? <ArrowRightLeft size={14} className="text-white/70" /> : t.type === "income" ? "💰" : (cat?.emoji || "✨")}
                             </div>
                             <div className="min-w-0">
-                              <div className="text-sm font-medium truncate">{t.note || (isTransfer ? "Transfer Saldo" : t.type === "income" ? "Pemasukan" : cat?.label)}</div>
-                              <div className="text-[11px] text-white/35 truncate">{formatDateID(t.date)} • {isTransfer ? `${fromW} ➔ ${toW}` : t.type === "income" ? "Pemasukan" : cat?.label}</div>
+                              <div className="text-sm font-medium truncate flex items-center gap-1.5">
+                                <span className="truncate">{t.note || (isTransfer ? "Transfer Saldo" : t.type === "income" ? "Pemasukan" : cat?.label)}</span>
+                                {routineRef && <span className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-teal/20 text-teal">🔁 Rutin</span>}
+                              </div>
+                              <div className="text-[11px] text-white/35 truncate">
+                                {formatDateID(t.date)} • {isTransfer ? `${fromW} ➔ ${toW}` : t.type === "income" ? "Pemasukan" : cat?.label}
+                                {routineRef && <> • Rutin: {routineRef.name}</>}
+                              </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
@@ -3295,20 +3302,23 @@ export default function AgrLedgerApp() {
           </div>
           <div className="space-y-2 overflow-y-auto pr-1 flex-1">
             {activePopup.breakdown.map((b, idx) => (
-              <div key={b.id || idx} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-white/70 truncate">
-                  {b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}
-                  {b.linked && <span className="text-lime/70 ml-1">✓ tercatat via transaksi</span>}
-                  {b.linked && b.plannedAmount !== undefined && b.amount !== b.plannedAmount && (
-                    <span className="text-white/30 ml-1">(rencana {rupiah(b.plannedAmount)})</span>
-                  )}
-                </span>
-                <span className="flex items-center gap-2 shrink-0">
-                  <span className={`tabular ${b.paid || b.linked ? "text-lime" : "text-white/80"}`}>{rupiah(b.amount)}</span>
-                  {activePopup.typeLabel === "Gaji" && !String(b.id).startsWith("lembur") && (
-                    <button onClick={() => { deleteSalaryEntry(b.id); setActivePopup(null); }} className="text-white/30 hover:text-coral"><Trash2 size={12} /></button>
-                  )}
-                </span>
+              <div key={b.id || idx} className="flex flex-col gap-0.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-white/70 truncate min-w-0 flex-1">
+                    {b.name}{b.installment ? <span className="text-white/30 ml-1">({b.installment}/{b.tenor})</span> : null}
+                  </span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    <span className={`tabular ${b.paid || b.linked ? "text-lime" : "text-white/80"}`}>
+                      {b.linked && b.plannedAmount !== undefined
+                        ? `${rupiah(b.amount)} / ${rupiah(b.plannedAmount)}`
+                        : rupiah(b.amount)}
+                    </span>
+                    {activePopup.typeLabel === "Gaji" && !String(b.id).startsWith("lembur") && (
+                      <button onClick={() => { deleteSalaryEntry(b.id); setActivePopup(null); }} className="text-white/30 hover:text-coral"><Trash2 size={12} /></button>
+                    )}
+                  </span>
+                </div>
+                {b.linked && <span className="text-lime/70 text-[10px]">✓ tercatat via transaksi</span>}
               </div>
             ))}
           </div>
@@ -3431,6 +3441,27 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
     });
   }, [routineEntries, date]);
 
+  const transportRoutineMatch = useMemo(
+    () => activeRoutineOptions.find((r) => r.name === "Transport") || null,
+    [activeRoutineOptions]
+  );
+
+  // Kategori "Transport" otomatis dikaitkan ke pos rutin bernama persis "Transport" (kalau ada),
+  // tanpa perlu pilih manual — nominal yang diisi user langsung ikut menjadi bagian dari plafon rutin itu.
+  useEffect(() => {
+    if (type !== "expense") return;
+    if (category === "transport") {
+      if (transportRoutineMatch && routineId !== transportRoutineMatch.id) {
+        setRoutineId(transportRoutineMatch.id);
+      }
+    } else if (routineId) {
+      const current = activeRoutineOptions.find((r) => r.id === routineId);
+      if (current && current.name === "Transport") {
+        setRoutineId("");
+      }
+    }
+  }, [type, category, transportRoutineMatch, activeRoutineOptions]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
       <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
@@ -3469,31 +3500,47 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
               ))}
             </div>
 
-            {activeRoutineOptions.length > 0 && (
-              <>
-                <label className="text-[11px] text-white/40 font-medium">Kaitkan dengan Pengeluaran Rutin (opsional)</label>
-                <select
-                  value={routineId}
-                  onChange={(e) => {
-                    const newId = e.target.value;
-                    setRoutineId(newId);
-                    if (newId && !amount) {
-                      const picked = activeRoutineOptions.find((r) => r.id === newId);
-                      if (picked) setAmount(formatRupiahInput(String(picked.amount)));
-                    }
-                  }}
-                  className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-2 text-sm outline-none focus-lime text-white"
-                  style={{ colorScheme: "dark" }}
-                >
-                  <option value="" style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>Bukan pengeluaran rutin</option>
-                  {activeRoutineOptions.map((r) => (
-                    <option key={r.id} value={r.id} style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>{r.name} ({rupiah(r.amount)}/bulan)</option>
-                  ))}
-                </select>
-                <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
-                  Kalau dikaitkan, nominal yang kamu isi di atas akan jadi nominal "Rutin" bulan ini (menggantikan nominal rencana) — dan tidak dihitung dobel di "Pengeluaran".
+            {category === "transport" ? (
+              transportRoutineMatch ? (
+                <p className="text-[10.5px] text-lime/70 mb-5 leading-relaxed flex items-start gap-1">
+                  <Check size={12} className="shrink-0 mt-0.5" />
+                  <span>Otomatis dikaitkan ke pos rutin "Transport" (plafon {rupiah(transportRoutineMatch.amount)}/bulan). Nominal di atas langsung menambah pemakaian bulan ini, tidak dihitung dobel di "Pengeluaran".</span>
                 </p>
-              </>
+              ) : (
+                <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
+                  Belum ada pos rutin bernama persis "Transport". Buat dulu lewat tab Rutin (mis. plafon Rp150.000/bulan) supaya transaksi berkategori Transport otomatis kepotong dari situ.
+                </p>
+              )
+            ) : (
+              activeRoutineOptions.length > 0 && (
+                <>
+                  <label className="text-[11px] text-white/40 font-medium">Kaitkan dengan Pengeluaran Rutin (opsional)</label>
+                  <select
+                    value={routineId}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setRoutineId(newId);
+                      if (newId) {
+                        setCategory("lainnya");
+                        if (!amount) {
+                          const picked = activeRoutineOptions.find((r) => r.id === newId);
+                          if (picked) setAmount(formatRupiahInput(String(picked.amount)));
+                        }
+                      }
+                    }}
+                    className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-2 text-sm outline-none focus-lime text-white"
+                    style={{ colorScheme: "dark" }}
+                  >
+                    <option value="" style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>Bukan pengeluaran rutin</option>
+                    {activeRoutineOptions.map((r) => (
+                      <option key={r.id} value={r.id} style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>{r.name} ({rupiah(r.amount)}/bulan)</option>
+                    ))}
+                  </select>
+                  <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
+                    Kalau dikaitkan, nominal yang kamu isi di atas akan jadi nominal "Rutin" bulan ini (menggantikan nominal rencana) — dan tidak dihitung dobel di "Pengeluaran".
+                  </p>
+                </>
+              )
             )}
           </>
         )}
