@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import logoImg from "./assets/logo.png";
-import { pdf } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
 import {
   Plus,
   TrendingUp,
@@ -16,6 +16,10 @@ import {
   Target,
   Search,
   PiggyBank,
+  Home,
+  Calendar,
+  Heart,
+  Clock,
   Edit2,
   Check,
   Download,
@@ -24,6 +28,7 @@ import {
   History,
   RotateCcw,
   Filter,
+  ListChecks,
   AlertCircle,
   ExternalLink,
   Star,
@@ -39,43 +44,628 @@ import {
   CartesianGrid,
 } from "recharts";
 
-import { CATEGORIES, MONTHS, TAB_ORDER, WALLET_COLORS } from "./constants";
-import {
-  rupiah,
-  formatRupiahInput,
-  parseRupiahInput,
-  toLocalISODate,
-  todayKey,
-  formatDateID,
-} from "./utils/format";
-import { getWeekRange, getWeeksInMonth, computeNextRecurDate } from "./utils/date";
-import {
-  emptyYearData,
-  seedData,
-  migrateData,
-  computeAkhir,
-  computeOvertime,
-} from "./utils/data";
+const CATEGORIES = [
+  { id: "makan", label: "Makan & Minum", emoji: "🍜", color: "#FFB84D" },
+  { id: "transport", label: "Transport", emoji: "🛵", color: "#7CE3FF" },
+  { id: "belanja", label: "Belanja", emoji: "🛍️", color: "#FF8FD8" },
+  { id: "tagihan", label: "Tagihan", emoji: "🧾", color: "#FF7A6B" },
+  { id: "hiburan", label: "Hiburan", emoji: "🎮", color: "#B39CFF" },
+  { id: "lainnya", label: "Lainnya", emoji: "✨", color: "#6EE7B7" },
+];
 
-import SectionLabel from "./components/SectionLabel";
-import EmptyRow from "./components/EmptyRow";
-import TopTabs from "./components/TopTabs";
-import TaskCard from "./components/TaskCard";
-import MonthlyReportDocument from "./components/MonthlyReportDocument";
-import ReportPickerSheet from "./components/ReportPickerSheet";
+const PRIORITIES = [
+  { id: "high", label: "Tinggi", color: "#FF7A6B" },
+  { id: "medium", label: "Sedang", color: "#FFB84D" },
+  { id: "low", label: "Rendah", color: "#7CE3FF" },
+];
 
-import TransactionSheet from "./components/sheets/TransactionSheet";
-import AddWishlistItemSheet from "./components/sheets/AddWishlistItemSheet";
-import SingleFieldSheet from "./components/sheets/SingleFieldSheet";
-import AddGoalSheet from "./components/sheets/AddGoalSheet";
-import TopUpGoalSheet from "./components/sheets/TopUpGoalSheet";
-import EditGoalCard from "./components/sheets/EditGoalCard";
-import AddSpaylaterSheet from "./components/sheets/AddSpaylaterSheet";
-import AddTaskSheet from "./components/sheets/AddTaskSheet";
-import AddWalletSheet from "./components/sheets/AddWalletSheet";
-import AddOvertimeSheet from "./components/sheets/AddOvertimeSheet";
-import AddRoutineSheet from "./components/sheets/AddRoutineSheet";
-import RoutineStopSheet from "./components/sheets/RoutineStopSheet";
+const MONTHS = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+
+const TAB_ORDER = ["home", "budget", "tasks", "wishlist", "lembur"];
+
+const rupiah = (n) => {
+  const val = Math.round(n || 0);
+  return val < 0 ? "-Rp" + Math.abs(val).toLocaleString("id-ID") : "Rp" + val.toLocaleString("id-ID");
+};
+
+const formatRupiahInput = (val) => {
+  const raw = String(val || "").replace(/[^0-9]/g, "");
+  if (!raw) return "";
+  return Number(raw).toLocaleString("id-ID");
+};
+
+const parseRupiahInput = (val) => {
+  const raw = String(val || "").replace(/[^0-9]/g, "");
+  return Number(raw) || 0;
+};
+
+const toLocalISODate = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const todayKey = () => toLocalISODate(new Date());
+
+function getWeekRange(d = new Date()) {
+  const day = d.getDay(); 
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return { start: monday, end: sunday };
+}
+
+function getWeeksInMonth(year, monthIdx) {
+  const firstDay = new Date(year, monthIdx, 1);
+  const lastDay = new Date(year, monthIdx + 1, 0);
+  const { start: firstWeekStart } = getWeekRange(firstDay);
+  const { start: lastWeekStart } = getWeekRange(lastDay);
+  const diffWeeks = Math.round((lastWeekStart - firstWeekStart) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  return diffWeeks;
+}
+
+function computeNextRecurDate(day, fromISO) {
+  const from = fromISO ? new Date(fromISO + "T00:00:00") : new Date();
+  let y = from.getFullYear();
+  let m = from.getMonth();
+  const clampDay = (yy, mm, d) => Math.min(d, new Date(yy, mm + 1, 0).getDate());
+
+  let candidateDay = clampDay(y, m, day);
+  let candidate = new Date(y, m, candidateDay);
+  if (candidate < new Date(from.toDateString())) {
+    m += 1;
+    if (m > 11) { m = 0; y += 1; }
+    candidateDay = clampDay(y, m, day);
+    candidate = new Date(y, m, candidateDay);
+  }
+  const mm = String(m + 1).padStart(2, "0");
+  const dd = String(candidateDay).padStart(2, "0");
+  return `${y}-${mm}-${dd}`;
+}
+
+const formatDateID = (iso) => {
+  if (!iso) return "-";
+  try {
+    return new Date(iso + "T00:00:00").toLocaleDateString("id-ID", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+};
+
+const WALLET_COLORS = ["#D4FF3F", "#7CE3FF", "#FF8FD8", "#FFB84D", "#B39CFF", "#6EE7B7", "#F472B6"];
+
+const emptyYearData = (inheritedGaji = 0) => ({
+  months: Object.fromEntries(
+    MONTHS.map((m) => [
+      m,
+      { saldoAwal: 0, gaji: inheritedGaji, keterangan: "" },
+    ])
+  ),
+});
+
+const seedData = () => ({
+  wallets: [
+    { id: "w1", name: "Dompet Utama", balance: 0, color: "#D4FF3F" },
+  ],
+  primaryWalletId: "w1",
+  transactions: [],
+  budgetLimit: 500000,
+  budgetPeriod: "monthly",
+  goals: [
+    { id: "g1", name: "Dana Darurat", target: 5000000, saved: 0 }
+  ],
+  budgetYears: { [new Date().getFullYear()]: emptyYearData(0) },
+  activeYear: new Date().getFullYear(),
+  wishlistCategories: [],
+  overtimeRate: 4500000,
+  overtimeEntries: [],
+  spaylater: [],
+  routineEntries: [],
+  tasks: [],
+  salaryEntries: [],
+});
+
+function migrateData(raw) {
+  const seed = seedData();
+  const merged = { ...seed, ...raw };
+  if (!merged.budgetYears || Object.keys(merged.budgetYears).length === 0) {
+    merged.budgetYears = seed.budgetYears;
+    merged.activeYear = seed.activeYear;
+  }
+  if (!merged.activeYear || !merged.budgetYears[merged.activeYear]) {
+    merged.activeYear = Object.keys(merged.budgetYears)[0];
+  }
+  if (merged.goal && !merged.goals) {
+    merged.goals = [{ id: "g1", ...merged.goal }];
+    delete merged.goal;
+  }
+  if (!merged.goals) merged.goals = seed.goals;
+
+  if (!merged.primaryWalletId || !merged.wallets.some(w => w.id === merged.primaryWalletId)) {
+    merged.primaryWalletId = merged.wallets[0]?.id || null;
+  }
+  
+  if (merged.monthlyBudget !== undefined && merged.budgetLimit === undefined) {
+    merged.budgetLimit = merged.monthlyBudget;
+    delete merged.monthlyBudget;
+  }
+  if (merged.dailyBudget !== undefined && merged.budgetLimit === undefined) {
+    merged.budgetLimit = merged.dailyBudget * 30;
+    delete merged.dailyBudget;
+  }
+  if (typeof merged.budgetLimit !== "number") merged.budgetLimit = seed.budgetLimit;
+  if (!merged.budgetPeriod) merged.budgetPeriod = "monthly";
+
+  if (!merged.wishlistCategories) merged.wishlistCategories = [];
+  else {
+    merged.wishlistCategories = merged.wishlistCategories.map(cat => ({
+      ...cat,
+      goalId: cat.goalId || null,
+      items: Array.isArray(cat.items) ? cat.items.map(i => ({ ...i, link: i.link || "" })) : []
+    }));
+  }
+
+  if (typeof merged.overtimeRate !== "number") merged.overtimeRate = seed.overtimeRate;
+  if (!Array.isArray(merged.overtimeEntries)) merged.overtimeEntries = [];
+  if (!Array.isArray(merged.spaylater)) merged.spaylater = [];
+  if (!Array.isArray(merged.routineEntries)) merged.routineEntries = [];
+  if (!Array.isArray(merged.tasks)) merged.tasks = [];
+  if (!Array.isArray(merged.salaryEntries)) merged.salaryEntries = [];
+
+  const defaultWalletId = merged.primaryWalletId || merged.wallets?.[0]?.id || "w1";
+  merged.salaryEntries = merged.salaryEntries.map(e => ({
+    ...e,
+    walletId: e.walletId || defaultWalletId,
+  }));
+
+  if (merged.salaryEntries.length === 0) {
+    for (const y of Object.keys(merged.budgetYears)) {
+      MONTHS.forEach((m, idx) => {
+        const g = merged.budgetYears[y].months[m]?.gaji;
+        if (g && g > 0) {
+          merged.salaryEntries.push({
+            id: crypto.randomUUID(),
+            amount: g,
+            date: `${y}-${String(idx + 1).padStart(2, "0")}-01`,
+            walletId: defaultWalletId,
+          });
+        }
+      });
+    }
+  }
+
+  merged.spaylater = merged.spaylater.map(s => ({
+    ...s,
+    walletId: s.walletId || defaultWalletId,
+  }));
+
+  merged.tasks = merged.tasks.map(t => ({
+    id: t.id || crypto.randomUUID(),
+    title: t.title || "Tugas",
+    description: t.description || "",
+    priority: t.priority || "medium",
+    dueDate: t.dueDate || "",
+    done: !!t.done,
+    createdAt: t.createdAt || Date.now(),
+    recurring: !!t.recurring,
+    recurDay: t.recurDay || null,
+    subtasks: Array.isArray(t.subtasks) ? t.subtasks.map(sub => ({
+      id: sub.id || crypto.randomUUID(),
+      text: sub.text || "",
+      done: !!sub.done,
+    })) : [],
+  }));
+
+  for (const y of Object.keys(merged.budgetYears)) {
+    if (merged.budgetYears[y] && merged.budgetYears[y].months) {
+      for (const m of Object.keys(merged.budgetYears[y].months)) {
+        delete merged.budgetYears[y].months[m].rutin;
+      }
+    }
+  }
+
+  merged.routineEntries = merged.routineEntries.map(e => {
+    let sIdx = e.startIndex !== undefined ? e.startIndex : 0;
+    let stopIdx = e.stopIndex !== undefined ? e.stopIndex : 11;
+    if (e.startMonth) {
+      const parts = e.startMonth.split("-");
+      if (parts.length === 2) sIdx = Number(parts[1]) - 1;
+    }
+    return {
+      id: e.id || crypto.randomUUID(),
+      name: e.name || "Rutin",
+      amount: Number(e.amount) || 0,
+      activeYear: e.activeYear || Number(merged.activeYear) || new Date().getFullYear(),
+      startIndex: sIdx,
+      stopIndex: stopIdx,
+    };
+  });
+
+  return merged;
+}
+
+function computeAkhir(row, customSaldoAwal = null) {
+  const sAwal = customSaldoAwal !== null ? customSaldoAwal : (row.saldoAwal || 0);
+  return (
+    sAwal +
+    (row.gaji || 0) +
+    (row.gajiTambahan || 0) -
+    (row.rutin || 0) -
+    (row.cicilan || 0) -
+    (row.pengeluaran || 0)
+  );
+}
+
+function computeOvertime(rate, jenis, jam) {
+  const safeRate = Number(rate) || 0;
+  const safeJam = Number(jam) || 0;
+  const perHour = safeRate / 173;
+  if (safeJam <= 0) return { amount: 0, hrs: 0 };
+  
+  let amount = 0, hrs = 0;
+  
+  if (jenis === "Biasa") {
+    amount += perHour * 1.5;
+    hrs += 1.5;
+    for (let h = 2; h <= safeJam; h++) {
+      amount += perHour * 2;
+      hrs += 2;
+    }
+  } else {
+    for (let h = 1; h <= safeJam; h++) {
+      const mult = h <= 8 ? 2 : h === 9 ? 3 : 4;
+      amount += perHour * mult;
+      hrs += mult;
+    }
+  }
+  
+  return { amount: Math.round(amount), hrs: Number(hrs.toFixed(1)) };
+}
+
+function SectionLabel({ children, noMargin }) {
+  return (
+    <div className={`text-[11px] uppercase tracking-wider text-white/35 font-medium ${noMargin ? "" : "mb-3"}`}>
+      {children}
+    </div>
+  );
+}
+
+function EmptyRow({ children }) {
+  return (
+    <div className="text-xs text-white/30 border border-dashed border-white/10 px-4 py-6 text-center rounded-xl">
+      {children}
+    </div>
+  );
+}
+
+function TopTabs({ active, onChange }) {
+  const tabs = [
+    { id: "home", label: "Beranda", icon: Home },
+    { id: "budget", label: "Budget", icon: Calendar },
+    { id: "tasks", label: "Tugas", icon: ListChecks },
+    { id: "wishlist", label: "Wishlist", icon: Heart },
+    { id: "lembur", label: "Lembur", icon: Clock },
+  ];
+  return (
+    <div className="flex gap-1 bg-white/[0.04] rounded-lg p-1 mb-6">
+      {tabs.map((t) => {
+        const Icon = t.icon;
+        const isActive = active === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className={`flex-1 py-2 rounded-md text-[10.5px] font-medium flex flex-col items-center gap-1 transition ${
+              isActive ? "bg-lime text-black" : "text-white/45 hover:text-white/70"
+            }`}
+          >
+            <Icon size={14} />
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TaskCard({ t, isExpanded, onToggleExpand, onToggleDone, onToggleSubtask, onEdit, onDelete }) {
+  const prio = PRIORITIES.find((p) => p.id === t.priority) || PRIORITIES[1];
+  const subDone = Array.isArray(t.subtasks) ? t.subtasks.filter((s) => s.done).length : 0;
+  const subTotal = Array.isArray(t.subtasks) ? t.subtasks.length : 0;
+  const isOverdue = !t.done && t.dueDate && t.dueDate < todayKey();
+
+  return (
+    <div className={`bg-white/[0.03] border rounded-xl p-4 transition ${t.done ? "border-white/5 opacity-60" : isOverdue ? "border-coral/40" : "border-white/10"}`}>
+      <div className="flex items-start gap-3">
+        <button onClick={onToggleDone} className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition ${t.done ? "bg-lime border-lime" : "border-white/25 hover:border-lime"}`}>
+          {t.done && <Check size={13} className="text-black" strokeWidth={3} />}
+        </button>
+
+        <div className="min-w-0 flex-1 cursor-pointer" onClick={onToggleExpand}>
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <span className={`font-medium text-sm break-words ${t.done ? "line-through text-white/40" : ""}`}>{t.title}</span>
+            <div className="flex items-center gap-1 shrink-0 mt-0.5">
+              {t.recurring && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-teal/20 text-teal">🔁 Rutin</span>}
+              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: prio.color + "26", color: prio.color }}>{prio.label}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-white/40">
+            {t.dueDate && <span className={isOverdue ? "text-coral font-medium" : ""}>{formatDateID(t.dueDate)}</span>}
+            {subTotal > 0 && <span>{subDone}/{subTotal} sub-tugas</span>}
+          </div>
+          {subTotal > 0 && (
+            <div className="h-[3px] bg-white/8 overflow-hidden rounded-full mt-2">
+              <div className="h-full bg-lime rounded-full transition-all" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={onEdit} className="text-white/30 hover:text-white p-1.5"><Edit2 size={13} /></button>
+          <button onClick={onDelete} className="text-white/30 hover:text-coral p-1.5"><Trash2 size={13} /></button>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <div className="mt-3 pt-3 border-t border-white/5">
+          {t.description && <p className="text-xs text-white/60 mb-3 leading-relaxed">{t.description}</p>}
+          {Array.isArray(t.subtasks) && t.subtasks.length > 0 && (
+            <div className="space-y-1.5">
+              {t.subtasks.map((s) => (
+                <label key={s.id} className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={s.done} onChange={() => onToggleSubtask(s.id)} className="accent-lime w-3.5 h-3.5" />
+                  <span className={`text-xs ${s.done ? "line-through text-white/30" : "text-white/70"}`}>{s.text}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// PDF REPORT COMPONENTS
+
+const pdfStyles = StyleSheet.create({
+  page: { padding: 36, fontSize: 9, fontFamily: "Helvetica", color: "#1a1a1a" },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, borderBottom: "2 solid #C8FF4D", paddingBottom: 12 },
+  brand: { fontSize: 16, fontWeight: 700 },
+  brandSub: { fontSize: 8, color: "#666", marginTop: 2 },
+  periodBox: { textAlign: "right" },
+  periodLabel: { fontSize: 8, color: "#666", textTransform: "uppercase", letterSpacing: 1 },
+  periodValue: { fontSize: 13, fontWeight: 700, marginTop: 2 },
+  summaryGrid: { flexDirection: "row", gap: 8, marginBottom: 20 },
+  summaryCard: { flex: 1, backgroundColor: "#f4f6f0", padding: 10, borderRadius: 4, borderLeft: "3 solid #8BB828" },
+  summaryLabel: { fontSize: 7, color: "#666", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 },
+  summaryValue: { fontSize: 12, fontWeight: 700 },
+  sectionTitle: { fontSize: 10, fontWeight: 700, marginTop: 14, marginBottom: 6 },
+  table: { borderTop: "1 solid #ddd", borderLeft: "1 solid #ddd" },
+  tr: { flexDirection: "row", borderBottom: "1 solid #ddd" },
+  thCell: { flex: 1, padding: 5, backgroundColor: "#111", color: "#fff", fontSize: 8, fontWeight: 700, borderRight: "1 solid #ddd" },
+  tdCell: { flex: 1, padding: 5, fontSize: 8, borderRight: "1 solid #ddd" },
+  tdCellRight: { flex: 1, padding: 5, fontSize: 8, borderRight: "1 solid #ddd", textAlign: "right" },
+  totalRow: { flexDirection: "row", backgroundColor: "#f4f6f0", fontWeight: 700 },
+  footer: { position: "absolute", bottom: 20, left: 36, right: 36, flexDirection: "row", justifyContent: "space-between", fontSize: 7, color: "#999", borderTop: "1 solid #eee", paddingTop: 6 },
+});
+
+function MonthlyReportDocument({ year, monthIndex, detail, transactions, wallets }) {
+  const monthName = MONTHS[monthIndex];
+  const totalIncome = (detail.gaji || 0) + (detail.gajiTambahan || 0);
+  const totalExpense = (detail.rutin || 0) + (detail.cicilan || 0) + (detail.pengeluaran || 0);
+
+  const categoryBreakdown = CATEGORIES.map((c) => ({
+    ...c,
+    total: transactions.filter((t) => t.type === "expense" && !t.routineId && t.category === c.id).reduce((s, t) => s + t.amount, 0),
+  })).filter((c) => c.total > 0).sort((a, b) => b.total - a.total);
+
+  const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || a.ts - b.ts);
+
+  return (
+    <Document title={`Laporan AGR Ledger ${monthName} ${year}`}>
+      <Page size="A4" style={pdfStyles.page} wrap>
+        <View style={pdfStyles.headerRow}>
+          <View>
+            <Text style={pdfStyles.brand}>AGR Ledger</Text>
+            <Text style={pdfStyles.brandSub}>Laporan Keuangan Bulanan</Text>
+          </View>
+          <View style={pdfStyles.periodBox}>
+            <Text style={pdfStyles.periodLabel}>Periode</Text>
+            <Text style={pdfStyles.periodValue}>{monthName} {year}</Text>
+          </View>
+        </View>
+
+        <View style={pdfStyles.summaryGrid}>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Saldo Awal</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(detail.resolvedSaldoAwal)}</Text>
+          </View>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Total Pemasukan</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(totalIncome)}</Text>
+          </View>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Total Pengeluaran</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(totalExpense)}</Text>
+          </View>
+          <View style={pdfStyles.summaryCard}>
+            <Text style={pdfStyles.summaryLabel}>Saldo Akhir</Text>
+            <Text style={pdfStyles.summaryValue}>{rupiah(detail.resolvedSaldoAkhir)}</Text>
+          </View>
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Rincian Pemasukan</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Keterangan</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Jumlah</Text>
+          </View>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.tdCell}>Gaji Pokok</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(detail.gaji)}</Text>
+          </View>
+          {(detail.gajiTambahanList || []).map((item, idx) => (
+            <View style={pdfStyles.tr} key={idx}>
+              <Text style={pdfStyles.tdCell}>{item.name}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(item.amount)}</Text>
+            </View>
+          ))}
+          <View style={pdfStyles.totalRow}>
+            <Text style={pdfStyles.tdCell}>Total Pemasukan</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(totalIncome)}</Text>
+          </View>
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Rutin & Cicilan</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Keterangan</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Jumlah</Text>
+          </View>
+          {(detail.rutinList || []).map((item, idx) => (
+            <View style={pdfStyles.tr} key={"r" + idx}>
+              <Text style={pdfStyles.tdCell}>{item.name} (Rutin)</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(item.amount)}</Text>
+            </View>
+          ))}
+          {(detail.cicilanList || []).map((item, idx) => (
+            <View style={pdfStyles.tr} key={"c" + idx}>
+              <Text style={pdfStyles.tdCell}>{item.name} (Cicilan {item.installment}/{item.tenor})</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(item.amount)}</Text>
+            </View>
+          ))}
+          {(detail.rutinList || []).length === 0 && (detail.cicilanList || []).length === 0 && (
+            <View style={pdfStyles.tr}><Text style={[pdfStyles.tdCell, { flex: 1.6 }]}>Tidak ada pos rutin/cicilan bulan ini.</Text></View>
+          )}
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Pengeluaran per Kategori</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Kategori</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Jumlah</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.4 }]}>%</Text>
+          </View>
+          {categoryBreakdown.map((c) => (
+            <View style={pdfStyles.tr} key={c.id}>
+              <Text style={pdfStyles.tdCell}>{c.emoji} {c.label}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(c.total)}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.4 }]}>{detail.pengeluaran > 0 ? ((c.total / detail.pengeluaran) * 100).toFixed(1) + "%" : "0%"}</Text>
+            </View>
+          ))}
+          {categoryBreakdown.length === 0 && (
+            <View style={pdfStyles.tr}><Text style={[pdfStyles.tdCell, { flex: 2 }]}>Tidak ada pengeluaran tercatat bulan ini.</Text></View>
+          )}
+          <View style={pdfStyles.totalRow}>
+            <Text style={pdfStyles.tdCell}>Total Pengeluaran Variabel</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(detail.pengeluaran)}</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.4 }]}></Text>
+          </View>
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Detail Transaksi ({sortedTx.length})</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={[pdfStyles.thCell, { flex: 0.5 }]}>Tanggal</Text>
+            <Text style={[pdfStyles.thCell, { flex: 1.3 }]}>Keterangan</Text>
+            <Text style={[pdfStyles.thCell, { flex: 0.7 }]}>Tipe</Text>
+            <Text style={[pdfStyles.thCell, { flex: 0.7, textAlign: "right" }]}>Jumlah</Text>
+          </View>
+          {sortedTx.map((t) => {
+            const cat = CATEGORIES.find((c) => c.id === t.category);
+            const label = t.type === "transfer" ? "Transfer" : t.type === "income" ? (t.note || "Pemasukan") : (t.note || cat?.label || "Pengeluaran");
+            const typeLabel = t.type === "transfer" ? "Transfer" : t.type === "income" ? "Masuk" : (cat?.label || "Keluar");
+            const sign = t.type === "transfer" ? "" : t.type === "income" ? "+" : "-";
+            return (
+              <View style={pdfStyles.tr} key={t.id}>
+                <Text style={[pdfStyles.tdCell, { flex: 0.5 }]}>{formatDateID(t.date)}</Text>
+                <Text style={[pdfStyles.tdCell, { flex: 1.3 }]}>{label}</Text>
+                <Text style={[pdfStyles.tdCell, { flex: 0.7 }]}>{typeLabel}</Text>
+                <Text style={[pdfStyles.tdCellRight, { flex: 0.7 }]}>{sign}{rupiah(t.amount)}</Text>
+              </View>
+            );
+          })}
+          {sortedTx.length === 0 && (
+            <View style={pdfStyles.tr}><Text style={[pdfStyles.tdCell, { flex: 3.2 }]}>Tidak ada transaksi tercatat bulan ini.</Text></View>
+          )}
+        </View>
+
+        <Text style={pdfStyles.sectionTitle}>Saldo Dompet (Saat Laporan Dibuat)</Text>
+        <View style={pdfStyles.table}>
+          <View style={pdfStyles.tr}>
+            <Text style={pdfStyles.thCell}>Dompet</Text>
+            <Text style={[pdfStyles.thCell, { textAlign: "right", flex: 0.6 }]}>Saldo</Text>
+          </View>
+          {wallets.map((w) => (
+            <View style={pdfStyles.tr} key={w.id}>
+              <Text style={pdfStyles.tdCell}>{w.name}</Text>
+              <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(w.balance)}</Text>
+            </View>
+          ))}
+          <View style={pdfStyles.totalRow}>
+            <Text style={pdfStyles.tdCell}>Total Saldo</Text>
+            <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(wallets.reduce((s, w) => s + w.balance, 0))}</Text>
+          </View>
+        </View>
+
+        <View style={pdfStyles.footer} fixed>
+          <Text>Dibuat otomatis oleh AGR Ledger • {new Date().toLocaleString("id-ID")}</Text>
+          <Text render={({ pageNumber, totalPages }) => `Halaman ${pageNumber} dari ${totalPages}`} />
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+function ReportPickerSheet({ years, defaultYear, defaultMonthIndex, generating, onClose, onGenerate }) {
+  const [year, setYear] = useState(defaultYear);
+  const [monthIndex, setMonthIndex] = useState(defaultMonthIndex);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Cetak Laporan Bulanan</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tahun</label>
+        <div className="grid grid-cols-4 gap-2 mt-1.5 mb-5">
+          {years.map((y) => (
+            <button key={y} onClick={() => setYear(y)} className={`py-2 rounded-lg text-xs font-medium border transition ${String(year) === String(y) ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/60"}`}>
+              {y}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Bulan</label>
+        <div className="grid grid-cols-3 gap-2 mt-1.5 mb-6">
+          {MONTHS.map((m, idx) => (
+            <button key={m} onClick={() => setMonthIndex(idx)} className={`py-2 rounded-lg text-[11px] font-medium border transition ${monthIndex === idx ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/60"}`}>
+              {m.slice(0, 3)}
+            </button>
+          ))}
+        </div>
+
+        <button disabled={generating} onClick={() => onGenerate(Number(year), monthIndex)} className="w-full bg-lime disabled:opacity-50 text-black font-semibold rounded-lg py-3.5 flex items-center justify-center gap-2">
+          {generating ? "Membuat PDF..." : (<><FileText size={15} /> Buat & Unduh PDF</>)}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function AgrLedgerApp() {
   const [data, setData] = useState(null);
@@ -2825,3 +3415,720 @@ export default function AgrLedgerApp() {
   );
 }
 
+function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initialData, routineEntries, onClose, onSubmit, onSalarySubmit }) {
+  const [type, setType] = useState(initialData?.type || defaultType || "expense");
+  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
+  const [category, setCategory] = useState(initialData?.category || CATEGORIES[0].id);
+  const [note, setNote] = useState(initialData?.note || "");
+  const [walletId, setWalletId] = useState(initialData?.walletId || primaryWalletId || wallets[0]?.id);
+  const [fromWalletId, setFromWalletId] = useState(initialData?.fromWalletId || wallets[0]?.id);
+  const [toWalletId, setToWalletId] = useState(initialData?.toWalletId || (wallets.length > 1 ? wallets[1].id : wallets[0]?.id));
+  const [date, setDate] = useState(initialData?.date || todayKey());
+  const [routineId, setRoutineId] = useState(initialData?.routineId || "");
+
+  const canSubmit = parseRupiahInput(amount) > 0 && date && (type === "salary" ? true : type === "transfer" ? (fromWalletId && toWalletId && fromWalletId !== toWalletId) : walletId);
+
+  const activeRoutineOptions = useMemo(() => {
+    if (!Array.isArray(routineEntries) || !date) return [];
+    const d = new Date(date.slice(0, 10) + "T00:00:00");
+    if (isNaN(d.getTime())) return [];
+    const y = d.getFullYear();
+    const mIdx = d.getMonth();
+    return routineEntries.filter((r) => {
+      const startIdx = r.startIndex !== undefined ? Number(r.startIndex) : 0;
+      const stopIdx = r.stopIndex !== undefined ? Number(r.stopIndex) : 11;
+      return Number(r.activeYear) === y && mIdx >= startIdx && mIdx <= stopIdx;
+    });
+  }, [routineEntries, date]);
+
+  const transportRoutineMatch = useMemo(
+    () => activeRoutineOptions.find((r) => r.name === "Transport") || null,
+    [activeRoutineOptions]
+  );
+
+  // Kategori "Transport" otomatis dikaitkan ke pos rutin bernama persis "Transport" (kalau ada),
+  // tanpa perlu pilih manual — nominal yang diisi user langsung ikut menjadi bagian dari plafon rutin itu.
+  useEffect(() => {
+    if (type !== "expense") return;
+    if (category === "transport") {
+      if (transportRoutineMatch && routineId !== transportRoutineMatch.id) {
+        setRoutineId(transportRoutineMatch.id);
+      }
+    } else if (routineId) {
+      const current = activeRoutineOptions.find((r) => r.id === routineId);
+      if (current && current.name === "Transport") {
+        setRoutineId("");
+      }
+    }
+  }, [type, category, transportRoutineMatch, activeRoutineOptions]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{title}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        
+        <div className="flex gap-1 bg-white/[0.04] rounded-lg p-1 mb-5 overflow-x-auto">
+          {[
+            { id: "expense", label: "Keluar" },
+            { id: "income", label: "Masuk" },
+            { id: "salary", label: "Gaji" },
+            { id: "transfer", label: "Transfer" },
+          ].map((t) => (
+            <button key={t.id} onClick={() => setType(t.id)} className={`flex-1 py-2 px-3 rounded-md text-xs font-medium whitespace-nowrap transition ${type === t.id ? "bg-lime text-black font-semibold" : "text-white/50 hover:text-white"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tanggal {type === "salary" ? "Gajian" : "Transaksi"}</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-5 text-sm outline-none focus-lime text-white" />
+        
+        <label className="text-[11px] text-white/40 font-medium">{type === "salary" ? "Total Gaji (Rp)" : "Jumlah (Rp)"}</label>
+        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        {type === "expense" && (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Kategori</label>
+            <div className="grid grid-cols-3 gap-2 mt-1.5 mb-5">
+              {CATEGORIES.map((c) => (
+                <button key={c.id} onClick={() => setCategory(c.id)} className="rounded-lg px-2 py-2.5 text-xs font-medium border transition" style={category === c.id ? { backgroundColor: c.color, borderColor: c.color, color: "#0C0D0F" } : { backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)" }}>
+                  <div className="text-base mb-0.5">{c.emoji}</div>{c.label}
+                </button>
+              ))}
+            </div>
+
+            {category === "transport" ? (
+              transportRoutineMatch ? (
+                <p className="text-[10.5px] text-lime/70 mb-5 leading-relaxed flex items-start gap-1">
+                  <Check size={12} className="shrink-0 mt-0.5" />
+                  <span>Otomatis dikaitkan ke pos rutin "Transport" (plafon {rupiah(transportRoutineMatch.amount)}/bulan). Nominal di atas langsung menambah pemakaian bulan ini, tidak dihitung dobel di "Pengeluaran".</span>
+                </p>
+              ) : (
+                <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
+                  Belum ada pos rutin bernama persis "Transport". Buat dulu lewat tab Rutin (mis. plafon Rp150.000/bulan) supaya transaksi berkategori Transport otomatis kepotong dari situ.
+                </p>
+              )
+            ) : (
+              activeRoutineOptions.length > 0 && (
+                <>
+                  <label className="text-[11px] text-white/40 font-medium">Kaitkan dengan Pengeluaran Rutin (opsional)</label>
+                  <select
+                    value={routineId}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setRoutineId(newId);
+                      if (newId) {
+                        setCategory("lainnya");
+                        if (!amount) {
+                          const picked = activeRoutineOptions.find((r) => r.id === newId);
+                          if (picked) setAmount(formatRupiahInput(String(picked.amount)));
+                        }
+                      }
+                    }}
+                    className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-2 text-sm outline-none focus-lime text-white"
+                    style={{ colorScheme: "dark" }}
+                  >
+                    <option value="" style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>Bukan pengeluaran rutin</option>
+                    {activeRoutineOptions.map((r) => (
+                      <option key={r.id} value={r.id} style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>{r.name} ({rupiah(r.amount)}/bulan)</option>
+                    ))}
+                  </select>
+                  <p className="text-[10.5px] text-white/35 mb-5 leading-relaxed">
+                    Kalau dikaitkan, nominal yang kamu isi di atas akan jadi nominal "Rutin" bulan ini (menggantikan nominal rencana) — dan tidak dihitung dobel di "Pengeluaran".
+                  </p>
+                </>
+              )
+            )}
+          </>
+        )}
+
+
+        {type === "transfer" ? (
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <div>
+              <label className="text-[11px] text-white/40 font-medium">Dari Dompet</label>
+              <div className="flex flex-col gap-1.5 mt-1.5">
+                {wallets.map((w) => (
+                  <button key={w.id} onClick={() => setFromWalletId(w.id)} className={`truncate rounded-lg px-3 py-2.5 text-xs font-medium border ${fromWalletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-[11px] text-white/40 font-medium">Ke Dompet</label>
+              <div className="flex flex-col gap-1.5 mt-1.5">
+                {wallets.map((w) => (
+                  <button key={w.id} onClick={() => setToWalletId(w.id)} className={`truncate rounded-lg px-3 py-2.5 text-xs font-medium border ${toWalletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : type === "salary" ? null : (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Dompet</label>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-1.5 mb-5">
+              {wallets.map((w) => (
+                <button key={w.id} onClick={() => setWalletId(w.id)} className={`truncate rounded-lg px-3 py-2 text-xs font-medium border ${walletId === w.id ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/70"}`}>{w.name}</button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {type !== "salary" && (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Catatan (opsional)</label>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan transaksi" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xs outline-none focus-lime" />
+          </>
+        )}
+
+        <button 
+          disabled={!canSubmit} 
+          onClick={() => {
+            if (type === "salary") {
+              onSalarySubmit({ amount: parseRupiahInput(amount), date, walletId: primaryWalletId || wallets[0]?.id });
+            } else {
+              onSubmit({ amount: parseRupiahInput(amount), category, note, walletId, fromWalletId, toWalletId, type, date, routineId: (type === "expense" && activeRoutineOptions.some(r => r.id === routineId)) ? routineId : null });
+            }
+          }} 
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2 text-xs"
+        >
+          Simpan {type === "salary" ? "Gaji" : "Transaksi"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddWishlistItemSheet({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [link, setLink] = useState("");
+  const canSubmit = name.trim() && parseRupiahInput(price) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Barang Wishlist</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <label className="text-[11px] text-white/40 font-medium">Nama barang</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Shifter" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" autoFocus />
+        
+        <label className="text-[11px] text-white/40 font-medium">Harga</label>
+        <input type="text" inputMode="numeric" value={price} onChange={(e) => setPrice(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+        
+        <label className="text-[11px] text-white/40 font-medium">Link Marketplace (Opsional)</label>
+        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://shopee.co.id/..." className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-xs outline-none focus-lime" />
+
+        <button disabled={!canSubmit} onClick={() => onSubmit({ name: name.trim(), price: parseRupiahInput(price), link: link.trim() })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Barang</button>
+      </div>
+    </div>
+  );
+}
+
+function SingleFieldSheet({ title, label, placeholder, submitLabel, initialValue, onClose, onSubmit }) {
+  const [value, setValue] = useState(initialValue || "");
+  const canSubmit = value.trim().length > 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{title}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <label className="text-[11px] text-white/40 font-medium">{label}</label>
+        <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder={placeholder} onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) onSubmit(value.trim()); }} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
+        <button disabled={!canSubmit} onClick={() => onSubmit(value.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">{submitLabel || "Simpan"}</button>
+      </div>
+    </div>
+  );
+}
+
+function AddGoalSheet({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [target, setTarget] = useState("");
+  const [saved, setSaved] = useState("");
+  const canSubmit = name.trim() && parseRupiahInput(target) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Target Tabungan</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama target</label>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Dana Darurat" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Target Nominal (Rp)</label>
+        <input type="text" inputMode="numeric" value={target} onChange={(e) => setTarget(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Sudah Terkumpul (Opsional)</label>
+        <input type="text" inputMode="numeric" value={saved} onChange={(e) => setSaved(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit({ name: name.trim(), target: parseRupiahInput(target), saved: parseRupiahInput(saved) || 0 })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
+        >
+          Tambah Target
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TopUpGoalSheet({ goal, onClose, onSubmit }) {
+  const [amount, setAmount] = useState("");
+  const canSubmit = parseRupiahInput(amount) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Tabungan</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <div className="text-xs text-white/40 mb-4">
+          {goal.name} · sudah terkumpul <span className="text-white/70 tabular">{rupiah(goal.saved)}</span> dari {rupiah(goal.target)}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nominal ditambahkan (Rp)</label>
+        <input autoFocus type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-6 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <button disabled={!canSubmit} onClick={() => onSubmit(parseRupiahInput(amount))} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah</button>
+      </div>
+    </div>
+  );
+}
+
+function EditGoalCard({ goal, lockTarget, onSave, onCancel }) {
+  const [name, setName] = useState(goal.name);
+  const [target, setTarget] = useState(formatRupiahInput(goal.target));
+  const [saved, setSaved] = useState(formatRupiahInput(goal.saved));
+  const canSave = name.trim() && parseRupiahInput(target) > 0;
+
+  return (
+    <div className="bg-white/[0.03] border border-lime/30 rounded-xl p-4">
+      <label className="text-[10px] text-white/40 font-medium">Nama target</label>
+      <input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-white/[0.06] rounded-lg px-3 py-2 mt-1 mb-3 text-sm outline-none focus-lime" />
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label className="text-[10px] text-white/40 font-medium">Target (Rp)</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={target}
+            disabled={lockTarget}
+            onChange={(e) => setTarget(formatRupiahInput(e.target.value))}
+            className="w-full bg-white/[0.06] rounded-lg px-3 py-2 mt-1 text-sm outline-none tabular focus-lime disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          {lockTarget && <div className="text-[9.5px] text-white/30 mt-1">Otomatis dari total Wishlist</div>}
+        </div>
+        <div>
+          <label className="text-[10px] text-white/40 font-medium">Terkumpul (Rp)</label>
+          <input type="text" inputMode="numeric" value={saved} onChange={(e) => setSaved(formatRupiahInput(e.target.value))} className="w-full bg-white/[0.06] rounded-lg px-3 py-2 mt-1 text-sm outline-none tabular focus-lime" />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          disabled={!canSave}
+          onClick={() => onSave({ name: name.trim(), target: lockTarget ? goal.target : parseRupiahInput(target), saved: parseRupiahInput(saved) || 0 })}
+          className="flex-1 bg-lime disabled:bg-white/10 disabled:text-white/30 text-black text-xs font-semibold rounded-lg py-2.5"
+        >
+          Simpan
+        </button>
+        <button onClick={onCancel} className="flex-1 bg-white/5 hover:bg-white/10 text-white/70 text-xs font-medium rounded-lg py-2.5">Batal</button>
+      </div>
+    </div>
+  );
+}
+
+function AddSpaylaterSheet({ wallets, primaryWalletId, onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [totalAmount, setTotalAmount] = useState("");
+  const [tenor, setTenor] = useState("3");
+  const [purchaseDate, setPurchaseDate] = useState(todayKey());
+  const [walletId, setWalletId] = useState(primaryWalletId || wallets[0]?.id);
+
+  const canSubmit = name.trim() && parseRupiahInput(totalAmount) > 0 && Number(tenor) > 0 && purchaseDate && walletId;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Spaylater</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama barang/transaksi</label>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Kredivo - Laptop" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Total Tagihan (Rp)</label>
+        <input type="text" inputMode="numeric" value={totalAmount} onChange={(e) => setTotalAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-4 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Tenor</label>
+        <div className="grid grid-cols-4 gap-2 mt-1.5 mb-4">
+          {[1, 3, 6, 12].map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTenor(String(t))}
+              className={`rounded-lg py-2.5 text-xs font-medium border transition ${Number(tenor) === t ? "bg-lime border-lime text-black font-semibold" : "bg-white/[0.03] border-white/10 text-white/70 hover:border-lime/50"}`}
+            >
+              {t} bln
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tanggal Pembelian</label>
+        <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+
+        <label className="text-[11px] text-white/40 font-medium">Dompet</label>
+        <select value={walletId} onChange={(e) => setWalletId(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime text-white" style={{ colorScheme: "dark" }}>
+          {wallets.map((w) => (
+            <option key={w.id} value={w.id} style={{ backgroundColor: "#1A1B1E", color: "#FFFFFF" }}>{w.name}</option>
+          ))}
+        </select>
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit({ name: name.trim(), totalAmount: parseRupiahInput(totalAmount), tenor: Number(tenor), purchaseDate, walletId })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
+        >
+          Tambah Spaylater
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddTaskSheet({ onClose, onSubmit, initialData }) {
+  const [title, setTitle] = useState(initialData?.title || "");
+  const [description, setDescription] = useState(initialData?.description || "");
+  const [priority, setPriority] = useState(initialData?.priority || "medium");
+  const [dueDate, setDueDate] = useState(initialData?.dueDate || "");
+  const [recurring, setRecurring] = useState(!!initialData?.recurring);
+  const [recurDay, setRecurDay] = useState(initialData?.recurDay || new Date().getDate());
+  const [subtasks, setSubtasks] = useState(
+    initialData?.subtasks?.map((s) => ({ ...s })) || []
+  );
+  const [subtaskInput, setSubtaskInput] = useState("");
+
+  const canSubmit = title.trim();
+
+  function addSubtaskDraft() {
+    if (!subtaskInput.trim()) return;
+    setSubtasks((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), text: subtaskInput.trim(), done: false }
+    ]);
+    setSubtaskInput("");
+  }
+
+  function removeSubtaskDraft(idx) {
+    setSubtasks((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{initialData ? "Edit Tugas" : "Tugas Baru"}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Judul Tugas</label>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="mis. Bayar tagihan listrik" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" autoFocus />
+
+        <label className="text-[11px] text-white/40 font-medium">Deskripsi (opsional)</label>
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detail tambahan..." rows={2} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime resize-none" />
+
+        <label className="text-[11px] text-white/40 font-medium">Prioritas</label>
+        <div className="flex gap-2 mt-1.5 mb-4">
+          {PRIORITIES.map((p) => (
+            <button key={p.id} onClick={() => setPriority(p.id)} className="flex-1 py-2.5 rounded-lg text-xs font-medium border transition" style={priority === p.id ? { backgroundColor: p.color, borderColor: p.color, color: "#0C0D0F" } : { backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)" }}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium flex items-center justify-between mb-1.5">
+          <span>Tugas Rutin Bulanan?</span>
+          <button
+            type="button"
+            onClick={() => setRecurring((v) => !v)}
+            className={`w-9 h-5 rounded-full transition relative ${recurring ? "bg-lime" : "bg-white/15"}`}
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition ${recurring ? "left-4" : "left-0.5"}`} />
+          </button>
+        </label>
+
+        {recurring ? (
+          <div className="mt-1.5 mb-4">
+            <div className="text-[11px] text-white/40 mb-1.5">Setiap tanggal berapa?</div>
+            <div className="grid grid-cols-7 gap-1.5">
+              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setRecurDay(d)}
+                  className={`py-2 rounded-md text-[10px] font-medium border ${recurDay === d ? "bg-lime text-black border-lime font-bold" : "bg-white/[0.03] border-white/10 text-white/60"}`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Tenggat Waktu (opsional)</label>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime text-white" />
+          </>
+        )}
+
+        <label className="text-[11px] text-white/40 font-medium">Sub-Tugas / Checklist (opsional)</label>
+        <div className="flex gap-2 mt-1.5 mb-2">
+          <input
+            value={subtaskInput}
+            onChange={(e) => setSubtaskInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubtaskDraft(); } }}
+            placeholder="mis. Cek nominal tagihan"
+            className="flex-1 bg-white/[0.04] rounded-lg px-3 py-2.5 text-xs outline-none focus-lime"
+          />
+          <button onClick={addSubtaskDraft} className="bg-white/10 text-white px-3 rounded-lg text-xs font-medium">Tambah</button>
+        </div>
+        {subtasks.length > 0 && (
+          <div className="space-y-1.5 mb-6">
+            {subtasks.map((s, idx) => (
+              <div key={s.id || idx} className="flex items-center justify-between bg-white/[0.03] rounded-lg px-3 py-2">
+                <span className={`text-xs truncate ${s.done ? "line-through text-white/30" : "text-white/70"}`}>{s.text}</span>
+                <button onClick={() => removeSubtaskDraft(idx)} className="text-white/30 hover:text-coral shrink-0 ml-2"><X size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit({ title: title.trim(), description: description.trim(), priority, dueDate, subtasks, recurring, recurDay })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5 mt-2"
+        >
+          Simpan Tugas
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddWalletSheet({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Tambah Dompet</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+        <label className="text-[11px] text-white/40 font-medium">Nama dompet</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Rekening BCA" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-6 text-sm outline-none focus-lime" />
+        <button disabled={!name.trim()} onClick={() => onSubmit(name.trim())} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Tambah Dompet</button>
+      </div>
+    </div>
+  );
+}
+
+function AddOvertimeSheet({ onClose, onSubmit, initialData }) {
+  const [date, setDate] = useState(initialData?.date || todayKey());
+  const [jenis, setJenis] = useState(initialData?.jenis || "Biasa");
+  const [totalJam, setTotalJam] = useState(initialData ? String(initialData.totalJam) : "");
+  const [paid, setPaid] = useState(initialData ? initialData.paid : true);
+
+  const getAvailableMonths = (dateStr) => {
+    if (!dateStr) return [];
+    const d = new Date(dateStr.slice(0,10) + "T00:00:00");
+    const y = d.getFullYear();
+    const mIdx = d.getMonth();
+
+    const currentMonthVal = `${y}-${String(mIdx + 1).padStart(2, "0")}`;
+    const currentLabel = `${MONTHS[mIdx]} ${y} (Bulan Berjalan)`;
+
+    const nextMIdx = (mIdx + 1) % 12;
+    const nextYear = mIdx === 11 ? y + 1 : y;
+    const nextMonthVal = `${nextYear}-${String(nextMIdx + 1).padStart(2, "0")}`;
+    const nextLabel = `${MONTHS[nextMIdx]} ${nextYear} (Bulan Berikutnya)`;
+
+    return [
+      { val: currentMonthVal, label: currentLabel },
+      { val: nextMonthVal, label: nextLabel }
+    ];
+  };
+
+  const [availableMonths, setAvailableMonths] = useState(getAvailableMonths(date));
+  const [targetMonth, setTargetMonth] = useState(initialData?.targetMonth || (availableMonths[0]?.val || ""));
+
+  const handleDateChange = (newDate) => {
+    setDate(newDate);
+    const months = getAvailableMonths(newDate);
+    setAvailableMonths(months);
+    if (!initialData) {
+      setTargetMonth(months[0]?.val || "");
+    }
+  };
+
+  const canSubmit = Number(totalJam) > 0 && !!date && !!targetMonth;
+  const { hrs } = computeOvertime(0, jenis, Number(totalJam) || 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{initialData ? "Edit Lembur" : "Catat Lembur"}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Tanggal Lembur Dilakukan</label>
+        <input type="date" value={date} onChange={(e) => handleDateChange(e.target.value)} className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Masuk Slip Gaji Bulan Mana?</label>
+        <div className="flex flex-col gap-2 mt-1.5 mb-5">
+          {availableMonths.map((mOpt) => (
+            <button
+              key={mOpt.val}
+              type="button"
+              onClick={() => setTargetMonth(mOpt.val)}
+              className={`py-3 px-4 rounded-lg text-xs font-medium text-left border transition flex items-center justify-between ${
+                targetMonth === mOpt.val
+                  ? "bg-lime text-black border-lime font-bold"
+                  : "bg-white/[0.03] border-white/10 text-white/70 hover:bg-white/[0.06]"
+              }`}
+            >
+              <span>{mOpt.label}</span>
+              {targetMonth === mOpt.val && <Check size={14} strokeWidth={2.5} />}
+            </button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Jenis Lembur</label>
+        <div className="flex bg-white/[0.04] rounded-lg p-1 mt-1.5 mb-5">
+          {["Biasa", "Libur"].map((j) => (
+            <button key={j} onClick={() => setJenis(j)} className={`flex-1 py-2 rounded-md text-sm font-medium transition ${jenis === j ? "bg-lime text-black" : "text-white/50"}`}>{j}</button>
+          ))}
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Total Jam</label>
+        <input type="number" inputMode="numeric" value={totalJam} onChange={(e) => setTotalJam(e.target.value)} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-2 text-xl font-medium tabular outline-none focus:border-lime" />
+        {Number(totalJam) > 0 && <div className="text-[11px] text-white/40 mb-5 tabular">≈ {hrs} jam terhitung</div>}
+
+        <label className="flex items-center gap-2.5 mb-6 cursor-pointer">
+          <input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} className="accent-lime w-4 h-4" />
+          <span className="text-sm text-white/70">Sudah dibayar / masuk slip gaji</span>
+        </label>
+
+        <button disabled={!canSubmit} onClick={() => onSubmit({ date, targetMonth, jenis, totalJam: Number(totalJam), paid })} className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5">Simpan Lembur</button>
+      </div>
+    </div>
+  );
+}
+
+function AddRoutineSheet({ initialData, onClose, onSubmit }) {
+  const [name, setName] = useState(initialData?.name || "");
+  const [amount, setAmount] = useState(initialData ? formatRupiahInput(initialData.amount) : "");
+  const [startIndex, setStartIndex] = useState(initialData?.startIndex ?? new Date().getMonth());
+
+  const canSubmit = name.trim() && parseRupiahInput(amount) > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">{initialData ? "Edit Pengeluaran Rutin" : "Tambah Pengeluaran Rutin"}</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <label className="text-[11px] text-white/40 font-medium">Nama</label>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Langganan Netflix" className="w-full bg-white/[0.04] rounded-lg px-3.5 py-3 mt-1.5 mb-4 text-sm outline-none focus-lime" />
+
+        <label className="text-[11px] text-white/40 font-medium">Jumlah per Bulan (Rp)</label>
+        <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(formatRupiahInput(e.target.value))} placeholder="0" className="w-full bg-transparent border-b border-white/10 py-2.5 mt-1.5 mb-5 text-xl font-medium tabular outline-none focus:border-lime" />
+
+        {!initialData && (
+          <>
+            <label className="text-[11px] text-white/40 font-medium">Mulai Bulan</label>
+            <div className="grid grid-cols-3 gap-2 mt-1.5 mb-6">
+              {MONTHS.map((m, idx) => (
+                <button
+                  key={m}
+                  onClick={() => setStartIndex(idx)}
+                  className={`py-2 rounded-lg text-[11px] font-medium border transition ${startIndex === idx ? "bg-lime text-black border-lime" : "bg-white/[0.03] border-white/10 text-white/60"}`}
+                >
+                  {m.slice(0, 3)}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <button
+          disabled={!canSubmit}
+          onClick={() => onSubmit(initialData ? { name: name.trim(), amount: parseRupiahInput(amount) } : { name: name.trim(), amount: parseRupiahInput(amount), startIndex })}
+          className="w-full bg-lime disabled:bg-white/10 disabled:text-white/30 text-black font-semibold rounded-lg py-3.5"
+        >
+          Simpan Rutin
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RoutineStopSheet({ item, onClose, onStop }) {
+  const startIdx = item.startIndex !== undefined ? Number(item.startIndex) : 0;
+  const [stopIndex, setStopIndex] = useState(Math.max(startIdx, new Date().getMonth()));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
+      <div className="w-full max-w-md bg-surface rounded-t-2xl md:rounded-2xl p-5 pb-8 border-t md:border border-white/10 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-semibold text-base">Stop "{item.name}"</div>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={19} /></button>
+        </div>
+
+        <p className="text-xs text-white/50 mb-4 leading-relaxed">
+          Pilih bulan terakhir pengeluaran ini masih aktif. Setelah bulan itu, pos rutin ini tidak akan lagi dihitung — termasuk di tahun-tahun berikutnya.
+        </p>
+
+        <label className="text-[11px] text-white/40 font-medium">Aktif Sampai Bulan</label>
+        <div className="grid grid-cols-3 gap-2 mt-1.5 mb-6">
+          {MONTHS.map((m, idx) => {
+            const disabled = idx < startIdx;
+            return (
+              <button
+                key={m}
+                disabled={disabled}
+                onClick={() => setStopIndex(idx)}
+                className={`py-2 rounded-lg text-[11px] font-medium border transition ${
+                  disabled
+                    ? "opacity-25 cursor-not-allowed bg-white/[0.02] border-white/5 text-white/30"
+                    : stopIndex === idx
+                    ? "bg-coral text-black border-coral font-bold"
+                    : "bg-white/[0.03] border-white/10 text-white/60"
+                }`}
+              >
+                {m.slice(0, 3)}
+              </button>
+            );
+          })}
+        </div>
+
+        <button onClick={() => onStop(stopIndex)} className="w-full bg-coral text-black font-bold rounded-lg py-3.5">
+          Konfirmasi Stop di {MONTHS[stopIndex]}
+        </button>
+      </div>
+    </div>
+  );
+}
