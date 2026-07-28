@@ -57,6 +57,8 @@ import {
   computeOvertime,
 } from "./utils/data";
 
+import FinancialHealthScore from "./components/FinancialHealthScore";
+import WeeklyInsight from "./components/WeeklyInsight";
 import SectionLabel from "./components/SectionLabel";
 import EmptyRow from "./components/EmptyRow";
 import TopTabs from "./components/TopTabs";
@@ -1726,6 +1728,9 @@ export default function AgrLedgerApp() {
                       </button>
                     </div>
                   </div>
+
+                  <FinancialHealthScore data={data} budgetRatio={budgetRatio} totals={totals} />
+                  <WeeklyInsight data={data} />
 
                   <div className="mb-9 bg-surface border border-white/10 rounded-2xl p-4 md:p-5">
                     <div className="flex items-center justify-between mb-4">

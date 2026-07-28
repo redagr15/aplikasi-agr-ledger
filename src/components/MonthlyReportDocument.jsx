@@ -123,7 +123,7 @@ function MonthlyReportDocument({ year, monthIndex, detail, transactions, wallets
           </View>
           {categoryBreakdown.map((c) => (
             <View style={pdfStyles.tr} key={c.id}>
-              <Text style={pdfStyles.tdCell}>{c.emoji} {c.label}</Text>
+              <Text style={pdfStyles.tdCell}>{c.label}</Text>
               <Text style={[pdfStyles.tdCellRight, { flex: 0.6 }]}>{rupiah(c.total)}</Text>
               <Text style={[pdfStyles.tdCellRight, { flex: 0.4 }]}>{detail.pengeluaran > 0 ? ((c.total / detail.pengeluaran) * 100).toFixed(1) + "%" : "0%"}</Text>
             </View>
