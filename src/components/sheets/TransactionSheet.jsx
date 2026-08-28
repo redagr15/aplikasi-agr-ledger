@@ -36,19 +36,17 @@ function TransactionSheet({ wallets, primaryWalletId, title, defaultType, initia
 
   // Kategori "Transport" otomatis dikaitkan ke pos rutin bernama persis "Transport" (kalau ada),
   // tanpa perlu pilih manual — nominal yang diisi user langsung ikut menjadi bagian dari plafon rutin itu.
+  // Catatan: ini SENGAJA cuma nge-set, bukan nge-clear. Versi sebelumnya juga meng-clear routineId setiap
+  // kali category !== "transport" dan pos rutin yang lagi ter-link kebetulan bernama "Transport" — itu
+  // ikut menghapus link yang baru saja dipilih manual dari dropdown "Kaitkan dengan Pengeluaran Rutin",
+  // karena handler dropdown itu juga memanggil setCategory("lainnya") di saat yang sama sehingga effect
+  // ini ikut ke-trigger ulang dan langsung mengosongkan routineId lagi.
   useEffect(() => {
     if (type !== "expense") return;
-    if (category === "transport") {
-      if (transportRoutineMatch && routineId !== transportRoutineMatch.id) {
-        setRoutineId(transportRoutineMatch.id);
-      }
-    } else if (routineId) {
-      const current = activeRoutineOptions.find((r) => r.id === routineId);
-      if (current && current.name === "Transport") {
-        setRoutineId("");
-      }
+    if (category === "transport" && transportRoutineMatch && routineId !== transportRoutineMatch.id) {
+      setRoutineId(transportRoutineMatch.id);
     }
-  }, [type, category, transportRoutineMatch, activeRoutineOptions]);
+  }, [type, category, transportRoutineMatch]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70">
